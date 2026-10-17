@@ -1,0 +1,1121 @@
+import os
+import threading
+import webbrowser
+from tkinter import filedialog
+import customtkinter as ctk
+from PIL import Image
+
+from src.config import (
+    BG_MAIN,
+    SURFACE_CARD,
+    SURFACE_CARD_BORDER,
+    SURFACE_INNER,
+    SURFACE_INNER_BORDER,
+    ACCENT_BLUE,
+    ACCENT_BLUE_HOVER,
+    STATUS_GREEN,
+    STATUS_RED,
+    STATUS_AMBER,
+    TEXT_MAIN,
+    TEXT_SECONDARY,
+    TEXT_MUTED,
+    AUTH_URL_PHOTOS,
+    AUTH_URL_MUSIC,
+    CONTENT_MODES,
+    QUALITY_PRESETS,
+    SettingsManager,
+)
+from src.utils.helpers import (
+    get_resource_path,
+    open_folder,
+    DownloadCancelledError,
+)
+from src.core.router import detect_url_type
+from src.core.ytdlp_engine import (
+    probe_video_quality,
+    download_video,
+)
+from src.core.insta_engine import download_instagram
+from src.core.vk_engine import (
+    extract_token,
+    download_vk_photos,
+    download_vk_music,
+    VKPYMUSIC_AVAILABLE,
+)
+
+ctk.set_appearance_mode("dark")
+ctk.set_default_color_theme("blue")
+
+
+class MediaHarvesterApp(ctk.CTk):
+    def __init__(self):
+        super().__init__()
+
+        self.settings = SettingsManager()
+        self.cancel_event = threading.Event()
+
+        self.title("MediaHarvester")
+        self.geometry("540x780")
+        self.minsize(460, 600)
+        self.configure(fg_color=BG_MAIN)
+
+        # Иконка окна
+        self.icon_path = get_resource_path(os.path.join("assets", "logo.ico"))
+        try:
+            if os.path.exists(self.icon_path):
+                self.iconbitmap(self.icon_path)
+        except Exception:
+            pass
+
+        # Логотип в заголовок через PIL
+        self.logo_image = None
+        try:
+            if os.path.exists(self.icon_path):
+                pil_img = Image.open(self.icon_path).resize((24, 24), Image.Resampling.LANCZOS)
+                self.logo_image = ctk.CTkImage(
+                    light_image=pil_img, dark_image=pil_img, size=(24, 24)
+                )
+        except Exception:
+            pass
+
+        # Шрифты — Segoe UI
+        self.font_title    = ctk.CTkFont(family="Segoe UI", size=15, weight="bold")
+        self.font_subtitle = ctk.CTkFont(family="Segoe UI", size=11)
+        self.font_section  = ctk.CTkFont(family="Segoe UI", size=11, weight="bold")
+        self.font_main     = ctk.CTkFont(family="Segoe UI", size=12)
+        self.font_bold     = ctk.CTkFont(family="Segoe UI", size=12, weight="bold")
+        self.font_small    = ctk.CTkFont(family="Segoe UI", size=11)
+        self.font_mono     = ctk.CTkFont(family="Consolas", size=11)
+
+        # Состояние приложения
+        self.download_path: str = self.settings.download_path
+        self.is_downloading: bool = False
+        self.is_probing: bool = False
+        self.last_saved_folder: str | None = None
+        self.current_screen: str = "downloader"
+        self._auth_url: str = AUTH_URL_PHOTOS
+
+        # Построение интерфейса
+        self.create_header()
+        self.create_views_container()
+        self.create_downloader_view()
+        self.create_info_view()
+        self.create_statusbar()
+
+        self.setup_keybindings()
+        self.setup_adaptive_resizing()
+
+        # Восстановление сохраненных данных
+        saved_token = self.settings.vk_token
+        if saved_token:
+            self.entry_token.insert(0, saved_token)
+
+        saved_cookies = self.settings.cookies_path
+        if saved_cookies:
+            self.entry_cookies_path.configure(state="normal")
+            self.entry_cookies_path.insert(0, saved_cookies)
+            self.entry_cookies_path.configure(state="readonly")
+            self._update_cookies_badge()
+
+        self.show_downloader_view()
+        self.combo_mode.set(CONTENT_MODES[0])  # "Автоопределение (Smart)" по умолчанию
+        self.on_mode_change(CONTENT_MODES[0])
+        self._update_token_badge()
+
+    # ──────────────────────────────────────────────────────
+    # ГОРЯЧИЕ КЛАВИШИ
+    # ──────────────────────────────────────────────────────
+    def setup_keybindings(self):
+        self.bind_all("<Control-v>", self._handle_ctrl_v, add="+")
+        self.bind_all("<Control-V>", self._handle_ctrl_v, add="+")
+
+    def _handle_ctrl_v(self, event):
+        focused = self.focus_get()
+        if focused is getattr(self.entry_token, "_entry", None):
+            self.paste_clipboard(self.entry_token)
+            return "break"
+        if focused is getattr(self.entry_url, "_entry", None):
+            self.paste_clipboard(self.entry_url)
+            return "break"
+
+    # ──────────────────────────────────────────────────────
+    # АДАПТИВНОЕ МАСШТАБИРОВАНИЕ
+    # ──────────────────────────────────────────────────────
+    def setup_adaptive_resizing(self):
+        self.bind("<Configure>", self._on_window_configure)
+
+    def _on_window_configure(self, event=None):
+        if event is not None and event.widget is not self:
+            return
+        w = self.winfo_width()
+        card_wrap = max(200, w - 58)
+        for attr in ("lbl_token_hint", "lbl_url_hint", "lbl_quality_info", "lbl_cookies_hint"):
+            lbl = getattr(self, attr, None)
+            if lbl:
+                lbl.configure(wraplength=card_wrap)
+        if hasattr(self, "info_labels"):
+            for lbl in self.info_labels:
+                lbl.configure(wraplength=card_wrap)
+        if hasattr(self, "lbl_status_text"):
+            self.lbl_status_text.configure(wraplength=max(140, w - 200))
+
+    # ──────────────────────────────────────────────────────
+    # ХЕДЕР
+    # ──────────────────────────────────────────────────────
+    def create_header(self):
+        hdr = ctk.CTkFrame(self, fg_color="transparent")
+        hdr.pack(fill="x", padx=16, pady=(14, 0))
+
+        left = ctk.CTkFrame(hdr, fg_color="transparent")
+        left.pack(side="left", fill="x", expand=True)
+
+        if self.logo_image:
+            ctk.CTkLabel(left, image=self.logo_image, text="").pack(
+                side="left", padx=(0, 10))
+
+        meta = ctk.CTkFrame(left, fg_color="transparent")
+        meta.pack(side="left")
+        ctk.CTkLabel(meta, text="MediaHarvester", font=self.font_title,
+                     text_color=TEXT_MAIN).pack(anchor="w")
+        self.lbl_header_sub = ctk.CTkLabel(
+            meta, text="Мультимедийный комбайн: YouTube • VK • Instagram",
+            font=self.font_subtitle, text_color=TEXT_MUTED)
+        self.lbl_header_sub.pack(anchor="w")
+
+        self.btn_nav_info = ctk.CTkButton(
+            hdr, text="Справка", width=84, height=30, corner_radius=6,
+            font=self.font_small,
+            fg_color=SURFACE_CARD, hover_color=SURFACE_CARD_BORDER,
+            text_color=TEXT_SECONDARY, border_width=1,
+            border_color=SURFACE_CARD_BORDER,
+            command=self.toggle_view)
+        self.btn_nav_info.pack(side="right")
+
+        sep = ctk.CTkFrame(self, fg_color=SURFACE_CARD_BORDER, height=1,
+                           corner_radius=0)
+        sep.pack(fill="x", padx=0, pady=(10, 0))
+
+    # ──────────────────────────────────────────────────────
+    # КОНТЕЙНЕР ЭКРАНОВ
+    # ──────────────────────────────────────────────────────
+    def create_views_container(self):
+        self.views_container = ctk.CTkFrame(self, fg_color="transparent")
+        self.views_container.pack(fill="both", expand=True, padx=14, pady=(8, 0))
+
+    # ──────────────────────────────────────────────────────
+    # ЭКРАН 1: ЗАГРУЗЧИК
+    # ──────────────────────────────────────────────────────
+    def create_downloader_view(self):
+        self.main_scroll = ctk.CTkScrollableFrame(
+            self.views_container, fg_color="transparent",
+            scrollbar_button_color=SURFACE_CARD_BORDER,
+            scrollbar_button_hover_color=TEXT_MUTED)
+        self._build_mode_card()
+        self._build_url_card()
+        self._build_quality_card()
+        self._build_token_card()
+        self._build_cookies_card()
+        self._build_folder_card()
+
+        self.btn_download = ctk.CTkButton(
+            self.main_scroll, text="Начать скачивание", height=42,
+            corner_radius=6, font=self.font_bold,
+            fg_color=ACCENT_BLUE, hover_color=ACCENT_BLUE_HOVER,
+            text_color=TEXT_MAIN,
+            command=self.start_download_thread)
+        self.btn_download.pack(fill="x", padx=2, pady=(12, 10))
+
+    def _card(self, parent, pady=(0, 10)):
+        f = ctk.CTkFrame(parent, fg_color=SURFACE_CARD, corner_radius=6,
+                         border_width=1, border_color=SURFACE_CARD_BORDER)
+        f.pack(fill="x", padx=2, pady=pady)
+        return f
+
+    def _section_label(self, parent, text, pady=(10, 6)):
+        ctk.CTkLabel(parent, text=text, font=self.font_section,
+                     text_color=TEXT_SECONDARY).pack(
+            anchor="w", padx=14, pady=pady)
+
+    def _build_mode_card(self):
+        card = self._card(self.main_scroll)
+        self._section_label(card, "Режим загрузки")
+        self.combo_mode = ctk.CTkOptionMenu(
+            card,
+            values=CONTENT_MODES,
+            command=self.on_mode_change,
+            height=34, corner_radius=6,
+            font=self.font_main, dropdown_font=self.font_main,
+            fg_color=SURFACE_INNER,
+            button_color=SURFACE_CARD_BORDER,
+            button_hover_color=SURFACE_INNER_BORDER,
+            dropdown_fg_color=SURFACE_CARD,
+            dropdown_hover_color=SURFACE_CARD_BORDER,
+            dropdown_text_color=TEXT_MAIN,
+            text_color=TEXT_MAIN,
+            dynamic_resizing=False)
+        self.combo_mode.pack(fill="x", padx=14, pady=(0, 12))
+
+    def _build_url_card(self):
+        self.card_url = self._card(self.main_scroll)
+
+        # Заголовок + Бейдж автоопределения
+        hrow = ctk.CTkFrame(self.card_url, fg_color="transparent")
+        hrow.pack(fill="x", padx=14, pady=(10, 6))
+        ctk.CTkLabel(hrow, text="Ссылка на источник",
+                     font=self.font_section,
+                     text_color=TEXT_SECONDARY).pack(side="left")
+        self.badge_detected = ctk.CTkLabel(
+            hrow, text="Ожидание ссылки",
+            font=ctk.CTkFont(family="Segoe UI", size=10),
+            fg_color=SURFACE_INNER, text_color=TEXT_MUTED,
+            corner_radius=4, padx=6, pady=2)
+        self.badge_detected.pack(side="right")
+
+        erow = ctk.CTkFrame(self.card_url, fg_color="transparent")
+        erow.pack(fill="x", padx=14, pady=(0, 6))
+        self.entry_url = ctk.CTkEntry(
+            erow,
+            placeholder_text="Вставьте ссылку (YouTube, Instagram, VK...)",
+            font=self.font_main, height=34, corner_radius=6,
+            fg_color=SURFACE_INNER, border_width=1,
+            border_color=SURFACE_INNER_BORDER,
+            text_color=TEXT_MAIN, placeholder_text_color=TEXT_MUTED)
+        self.entry_url.pack(side="left", fill="x", expand=True, padx=(0, 6))
+        self.entry_url.bind("<KeyRelease>", self._on_url_changed)
+
+        ctk.CTkButton(
+            erow, text="Вставить", width=74, height=34, corner_radius=6,
+            font=self.font_small,
+            fg_color=SURFACE_CARD_BORDER,
+            hover_color=SURFACE_INNER_BORDER,
+            text_color=TEXT_SECONDARY,
+            command=lambda: self.paste_clipboard(self.entry_url)
+        ).pack(side="right", padx=(6, 0))
+
+        ctk.CTkButton(
+            erow, text="Очистить", width=74, height=34, corner_radius=6,
+            font=self.font_small,
+            fg_color=SURFACE_CARD_BORDER,
+            hover_color=SURFACE_INNER_BORDER,
+            text_color=TEXT_MUTED,
+            command=self._clear_url
+        ).pack(side="right")
+
+        self.lbl_url_hint = ctk.CTkLabel(
+            self.card_url,
+            text="Поддерживаются видео YouTube, посты и Reels Instagram, фото и музыка VK",
+            font=self.font_subtitle, text_color=TEXT_MUTED, justify="left")
+        self.lbl_url_hint.pack(anchor="w", padx=14, pady=(0, 10))
+
+    def _build_quality_card(self):
+        self.card_quality = self._card(self.main_scroll)
+        self._section_label(self.card_quality, "Качество видео / аудио")
+
+        qrow = ctk.CTkFrame(self.card_quality, fg_color="transparent")
+        qrow.pack(fill="x", padx=14, pady=(0, 6))
+
+        self.combo_quality = ctk.CTkOptionMenu(
+            qrow,
+            values=QUALITY_PRESETS,
+            height=34, corner_radius=6,
+            font=self.font_main, dropdown_font=self.font_main,
+            fg_color=SURFACE_INNER,
+            button_color=SURFACE_CARD_BORDER,
+            button_hover_color=SURFACE_INNER_BORDER,
+            dropdown_fg_color=SURFACE_CARD,
+            dropdown_hover_color=SURFACE_CARD_BORDER,
+            dropdown_text_color=TEXT_MAIN,
+            text_color=TEXT_MAIN,
+            dynamic_resizing=False)
+        self.combo_quality.pack(side="left", fill="x", expand=True, padx=(0, 6))
+
+        self.btn_probe_quality = ctk.CTkButton(
+            qrow, text="Проверить", width=90, height=34, corner_radius=6,
+            font=self.font_small,
+            fg_color=SURFACE_CARD_BORDER,
+            hover_color=SURFACE_INNER_BORDER,
+            text_color=TEXT_SECONDARY,
+            command=self.start_probe_quality_thread)
+        self.btn_probe_quality.pack(side="right")
+
+        # Чекбокс загрузки плейлистов
+        self.chk_playlist = ctk.CTkCheckBox(
+            self.card_quality,
+            text="Скачивать весь плейлист (если ссылка содержит список)",
+            font=self.font_small,
+            text_color=TEXT_SECONDARY,
+            fg_color=ACCENT_BLUE,
+            hover_color=ACCENT_BLUE_HOVER)
+        self.chk_playlist.pack(anchor="w", padx=14, pady=(2, 6))
+
+        self.lbl_quality_info = ctk.CTkLabel(
+            self.card_quality,
+            text="Нажмите «Проверить» или вставьте ссылку для анализа доступных качеств",
+            font=self.font_subtitle, text_color=TEXT_MUTED, justify="left")
+        self.lbl_quality_info.pack(anchor="w", padx=14, pady=(0, 10))
+
+    def _build_token_card(self):
+        self.card_token = self._card(self.main_scroll)
+
+        hrow = ctk.CTkFrame(self.card_token, fg_color="transparent")
+        hrow.pack(fill="x", padx=14, pady=(10, 6))
+        ctk.CTkLabel(hrow, text="Токен доступа ВКонтакте",
+                     font=self.font_section,
+                     text_color=TEXT_SECONDARY).pack(side="left")
+        self.badge_token_status = ctk.CTkLabel(
+            hrow, text="Требуется",
+            font=ctk.CTkFont(family="Segoe UI", size=10),
+            fg_color=SURFACE_INNER, text_color=TEXT_MUTED,
+            corner_radius=4, padx=6, pady=2)
+        self.badge_token_status.pack(side="right")
+
+        self.btn_auth = ctk.CTkButton(
+            self.card_token, text="Получить токен в браузере",
+            height=34, corner_radius=6, font=self.font_main,
+            fg_color=ACCENT_BLUE, hover_color=ACCENT_BLUE_HOVER,
+            text_color=TEXT_MAIN, command=self.open_auth)
+        self.btn_auth.pack(fill="x", padx=14, pady=(0, 8))
+
+        erow = ctk.CTkFrame(self.card_token, fg_color="transparent")
+        erow.pack(fill="x", padx=14, pady=(0, 6))
+        self.entry_token = ctk.CTkEntry(
+            erow,
+            placeholder_text="Вставьте скопированную ссылку или токен...",
+            font=self.font_main, height=34, corner_radius=6,
+            fg_color=SURFACE_INNER, border_width=1,
+            border_color=SURFACE_INNER_BORDER,
+            text_color=TEXT_MAIN, placeholder_text_color=TEXT_MUTED)
+        self.entry_token.pack(side="left", fill="x", expand=True, padx=(0, 6))
+        self.entry_token.bind("<KeyRelease>", self._on_token_changed)
+
+        ctk.CTkButton(
+            erow, text="Вставить", width=74, height=34, corner_radius=6,
+            font=self.font_small,
+            fg_color=SURFACE_CARD_BORDER,
+            hover_color=SURFACE_INNER_BORDER,
+            text_color=TEXT_SECONDARY,
+            command=lambda: self.paste_clipboard(self.entry_token)
+        ).pack(side="right")
+
+        self.lbl_token_hint = ctk.CTkLabel(
+            self.card_token,
+            text="Токен извлекается автоматически из скопированной ссылки и сохраняется",
+            font=self.font_subtitle, text_color=TEXT_MUTED, justify="left")
+        self.lbl_token_hint.pack(anchor="w", padx=14, pady=(0, 10))
+
+    def _build_cookies_card(self):
+        """Компактная карточка настройки Cookies для Instagram и возрастных видео YouTube."""
+        self.card_cookies = self._card(self.main_scroll)
+
+        hrow = ctk.CTkFrame(self.card_cookies, fg_color="transparent")
+        hrow.pack(fill="x", padx=14, pady=(10, 6))
+        ctk.CTkLabel(hrow, text="Файл Cookies (Instagram / YouTube 18+)",
+                     font=self.font_section,
+                     text_color=TEXT_SECONDARY).pack(side="left")
+        self.badge_cookies_status = ctk.CTkLabel(
+            hrow, text="Не задан",
+            font=ctk.CTkFont(family="Segoe UI", size=10),
+            fg_color=SURFACE_INNER, text_color=TEXT_MUTED,
+            corner_radius=4, padx=6, pady=2)
+        self.badge_cookies_status.pack(side="right")
+
+        erow = ctk.CTkFrame(self.card_cookies, fg_color="transparent")
+        erow.pack(fill="x", padx=14, pady=(0, 6))
+
+        self.entry_cookies_path = ctk.CTkEntry(
+            erow,
+            font=self.font_mono, height=34, corner_radius=6,
+            fg_color=SURFACE_INNER, border_width=1,
+            border_color=SURFACE_INNER_BORDER,
+            text_color=TEXT_SECONDARY,
+            placeholder_text="Путь к файлу cookies.txt...")
+        self.entry_cookies_path.configure(state="readonly")
+        self.entry_cookies_path.pack(side="left", fill="x", expand=True, padx=(0, 6))
+
+        ctk.CTkButton(
+            erow, text="Обзор", width=68, height=34, corner_radius=6,
+            font=self.font_small,
+            fg_color=SURFACE_CARD_BORDER,
+            hover_color=SURFACE_INNER_BORDER,
+            text_color=TEXT_SECONDARY,
+            command=self.choose_cookies_file
+        ).pack(side="right", padx=(6, 0))
+
+        ctk.CTkButton(
+            erow, text="Сбросить", width=68, height=34, corner_radius=6,
+            font=self.font_small,
+            fg_color=SURFACE_CARD_BORDER,
+            hover_color=SURFACE_INNER_BORDER,
+            text_color=TEXT_MUTED,
+            command=self.clear_cookies_file
+        ).pack(side="right")
+
+        self.lbl_cookies_hint = ctk.CTkLabel(
+            self.card_cookies,
+            text="Для скачивания приватных постов Instagram, каруселей и видео 18+",
+            font=self.font_subtitle, text_color=TEXT_MUTED, justify="left")
+        self.lbl_cookies_hint.pack(anchor="w", padx=14, pady=(0, 10))
+
+    def _build_folder_card(self):
+        self.card_folder = self._card(self.main_scroll)
+        self._section_label(self.card_folder, "Папка для сохранения")
+
+        row = ctk.CTkFrame(self.card_folder, fg_color="transparent")
+        row.pack(fill="x", padx=14, pady=(0, 12))
+
+        self.entry_folder_path = ctk.CTkEntry(
+            row, font=self.font_mono, height=34, corner_radius=6,
+            fg_color=SURFACE_INNER, border_width=1,
+            border_color=SURFACE_INNER_BORDER,
+            text_color=TEXT_SECONDARY)
+        self.entry_folder_path.insert(0, self.download_path)
+        self.entry_folder_path.configure(state="readonly")
+        self.entry_folder_path.pack(side="left", fill="x", expand=True, padx=(0, 6))
+
+        ctk.CTkButton(
+            row, text="Обзор", width=68, height=34, corner_radius=6,
+            font=self.font_small,
+            fg_color=SURFACE_CARD_BORDER,
+            hover_color=SURFACE_INNER_BORDER,
+            text_color=TEXT_SECONDARY,
+            command=self.choose_folder
+        ).pack(side="right", padx=(6, 0))
+
+        self.btn_open_folder = ctk.CTkButton(
+            row, text="Открыть", width=68, height=34, corner_radius=6,
+            font=self.font_small,
+            fg_color=SURFACE_CARD_BORDER,
+            hover_color=SURFACE_INNER_BORDER,
+            text_color=TEXT_SECONDARY,
+            command=self.open_target_folder)
+        self.btn_open_folder.pack(side="right")
+
+    def _clear_url(self):
+        self.entry_url.delete(0, "end")
+        self._on_url_changed()
+
+    def _on_url_changed(self, event=None):
+        url = self.entry_url.get().strip()
+        detected = detect_url_type(url)
+
+        # Обновление статус-бейджа роутера
+        if not url:
+            self.badge_detected.configure(
+                text="Ожидание ссылки", text_color=TEXT_MUTED, fg_color=SURFACE_INNER)
+        else:
+            self.badge_detected.configure(
+                text=detected["label"], text_color=STATUS_GREEN, fg_color=SURFACE_INNER)
+
+        # Если включен режим автоопределения, адаптируем видимость карточек
+        current_mode = self.combo_mode.get()
+        if "Автоопределение" in current_mode:
+            self._apply_smart_routing(detected)
+
+    def _apply_smart_routing(self, detected: dict):
+        engine = detected.get("engine", "none")
+
+        if engine in ("vk_photos", "vk_music"):
+            self._auth_url = AUTH_URL_PHOTOS if engine == "vk_photos" else AUTH_URL_MUSIC
+            self.card_quality.pack_forget()
+            if not self.card_token.winfo_ismapped():
+                self.card_token.pack(fill="x", padx=2, pady=(0, 10), before=self.card_cookies)
+            self._update_token_badge()
+        elif engine == "insta":
+            self.card_quality.pack_forget()
+            self.card_token.pack_forget()
+        elif engine == "ytdlp":
+            if not self.card_quality.winfo_ismapped():
+                self.card_quality.pack(fill="x", padx=2, pady=(0, 10), before=self.card_cookies)
+            self.card_token.pack_forget()
+        else:
+            # По умолчанию в Smart-режиме держим карточку качества видимой
+            if not self.card_quality.winfo_ismapped():
+                self.card_quality.pack(fill="x", padx=2, pady=(0, 10), before=self.card_cookies)
+            self.card_token.pack_forget()
+
+        self.update_idletasks()
+
+    # ──────────────────────────────────────────────────────
+    # УПРАВЛЕНИЕ COOKIES
+    # ──────────────────────────────────────────────────────
+    def choose_cookies_file(self):
+        filename = filedialog.askopenfilename(
+            title="Выберите файл cookies.txt",
+            filetypes=[("Text files (*.txt)", "*.txt"), ("All files", "*.*")]
+        )
+        if filename:
+            self.settings.cookies_path = filename
+            self.entry_cookies_path.configure(state="normal")
+            self.entry_cookies_path.delete(0, "end")
+            self.entry_cookies_path.insert(0, filename)
+            self.entry_cookies_path.configure(state="readonly")
+            self._update_cookies_badge()
+            self.update_status(f"Cookies сохранены: {os.path.basename(filename)}", state="idle")
+
+    def clear_cookies_file(self):
+        self.settings.cookies_path = ""
+        self.entry_cookies_path.configure(state="normal")
+        self.entry_cookies_path.delete(0, "end")
+        self.entry_cookies_path.configure(state="readonly")
+        self._update_cookies_badge()
+        self.update_status("Cookies сброшены", state="idle")
+
+    def _update_cookies_badge(self):
+        c_path = self.settings.cookies_path
+        if c_path and os.path.isfile(c_path):
+            self.badge_cookies_status.configure(
+                text="Настроен", text_color=STATUS_GREEN, fg_color=SURFACE_INNER)
+        else:
+            self.badge_cookies_status.configure(
+                text="Не задан", text_color=TEXT_MUTED, fg_color=SURFACE_INNER)
+
+    # ──────────────────────────────────────────────────────
+    # ПРОБИНГ КАЧЕСТВА ВИДЕО
+    # ──────────────────────────────────────────────────────
+    def start_probe_quality_thread(self):
+        url = self.entry_url.get().strip()
+        if not url:
+            self.lbl_quality_info.configure(
+                text="Сначала вставьте ссылку на видео в поле выше",
+                text_color=TEXT_MUTED)
+            return
+
+        if self.is_probing:
+            return
+
+        self.is_probing = True
+        self.btn_probe_quality.configure(state="disabled", text="Анализ...")
+        self.lbl_quality_info.configure(
+            text="Получение списка доступных разрешений...",
+            text_color=TEXT_SECONDARY)
+
+        cookies = self.settings.cookies_path
+
+        def _worker():
+            try:
+                heights, title = probe_video_quality(url, cookies_path=cookies)
+
+                def _success():
+                    if heights:
+                        h_str = ", ".join(f"{h}p" for h in heights[:6])
+                        title_cut = f" • {title[:24]}..." if title else ""
+                        self.lbl_quality_info.configure(
+                            text=f"Доступно: {h_str}{title_cut}",
+                            text_color=STATUS_GREEN
+                        )
+                    else:
+                        self.lbl_quality_info.configure(
+                            text="Видео доступно (наилучшее качество будет выбрано автоматически)",
+                            text_color=STATUS_GREEN
+                        )
+                    self.btn_probe_quality.configure(state="normal", text="Проверить")
+                    self.is_probing = False
+
+                self.after(0, _success)
+            except Exception:
+                def _fail():
+                    self.lbl_quality_info.configure(
+                        text="Не удалось получить форматы заранее (будет скачано лучшее доступное)",
+                        text_color=TEXT_MUTED
+                    )
+                    self.btn_probe_quality.configure(state="normal", text="Проверить")
+                    self.is_probing = False
+
+                self.after(0, _fail)
+
+        threading.Thread(target=_worker, daemon=True).start()
+
+    # ──────────────────────────────────────────────────────
+    # ЭКРАН 2: СПРАВКА
+    # ──────────────────────────────────────────────────────
+    def create_info_view(self):
+        self.info_scroll = ctk.CTkScrollableFrame(
+            self.views_container, fg_color="transparent",
+            scrollbar_button_color=SURFACE_CARD_BORDER,
+            scrollbar_button_hover_color=TEXT_MUTED)
+        self.info_labels = []
+
+        hcard = self._info_card(pady=(0, 10))
+        hrow = ctk.CTkFrame(hcard, fg_color="transparent")
+        hrow.pack(fill="x", padx=14, pady=12)
+        ctk.CTkLabel(hrow, text="Руководство MediaHarvester",
+                     font=self.font_title,
+                     text_color=TEXT_MAIN).pack(side="left")
+        ctk.CTkButton(
+            hrow, text="Назад", width=74, height=30, corner_radius=6,
+            font=self.font_small,
+            fg_color=ACCENT_BLUE, hover_color=ACCENT_BLUE_HOVER,
+            text_color=TEXT_MAIN,
+            command=self.show_downloader_view).pack(side="right")
+
+        self._info_section(
+            "1. Умное автоопределение (Smart Mode)",
+            "Вставьте любую ссылку на видео, пост или музыку — MediaHarvester "
+            "самостоятельно определит платформу (YouTube, Instagram, VK) "
+            "и подберёт оптимальный модуль скачивания без необходимости "
+            "вручную переключать режим.")
+
+        self._info_section(
+            "2. Безопасная отмена загрузки",
+            "Во время любого скачивания кнопка меняется на «Остановить скачивание». "
+            "При нажатии процесс завершается корректно и безопасно, сохраняя уже загруженные файлы "
+            "и не подвешивая графический интерфейс.")
+
+        self._info_section(
+            "3. Instagram (Фото, Карусели, Reels, Stories)",
+            "Поддерживается скачивание одиночных фотопостов, каруселей "
+            "(содержащих фото и видео вместе), Stories и Reels в максимальном качестве.\n"
+            "Если пост находится в закрытом аккаунте или Instagram блокирует гостевой доступ, "
+            "экспортируйте файл cookies.txt из браузера и укажите его в блоке Cookies.")
+
+        self._info_section(
+            "4. Экспорт cookies.txt для Instagram и YouTube 18+",
+            "Для скачивания контента, требующего авторизации:\n"
+            "  1. Установите расширение для браузера (например, «Get cookies.txt LOCALLY» в Chrome/Firefox).\n"
+            "  2. Авторизуйтесь на сайте Instagram или YouTube.\n"
+            "  3. Нажмите на иконку расширения и сохраните файл cookies.txt.\n"
+            "  4. В MediaHarvester нажмите «Обзор» в блоке Cookies и выберите этот файл.")
+
+        self._info_section(
+            "5. Скачивание видео и аудио (YouTube • VK • IG Reels)",
+            "Выберите желаемое качество: от 360p до 4K, либо «Только аудио (MP3)» в битрейте 320 kbps.\n"
+            "При скачивании в MP3 в файл автоматически встраиваются ID3-теги исполнителя и трека.\n"
+            "Включите чекбокс «Скачивать весь плейлист», чтобы сохранить все ролики подборки в отдельную папку.")
+
+        self._info_section(
+            "6. Скачивание музыки и фотоальбомов ВКонтакте",
+            "Для доступа к фотоальбомам и музыке VK нажмите «Получить токен в браузере». "
+            "После подтверждения скопируйте ссылку и нажмите «Вставить» — токен сохранится "
+            "в настройках. Для музыки поддерживаются плейлисты и аудиозаписи профилей до 1000 треков.")
+
+        ctk.CTkButton(
+            self.info_scroll, text="Вернуться к скачиванию", height=42,
+            corner_radius=6, font=self.font_bold,
+            fg_color=ACCENT_BLUE, hover_color=ACCENT_BLUE_HOVER,
+            text_color=TEXT_MAIN,
+            command=self.show_downloader_view
+        ).pack(fill="x", padx=2, pady=(6, 12))
+
+    def _info_card(self, pady=(0, 10)):
+        f = ctk.CTkFrame(self.info_scroll, fg_color=SURFACE_CARD,
+                         corner_radius=6, border_width=1,
+                         border_color=SURFACE_CARD_BORDER)
+        f.pack(fill="x", padx=2, pady=pady)
+        return f
+
+    def _info_section(self, title: str, body: str):
+        card = self._info_card()
+        ctk.CTkLabel(card, text=title, font=self.font_section,
+                     text_color=TEXT_SECONDARY).pack(
+            anchor="w", padx=14, pady=(12, 5))
+        lbl = ctk.CTkLabel(card, text=body, font=self.font_main,
+                            text_color=TEXT_MUTED, justify="left")
+        lbl.pack(anchor="w", padx=14, pady=(0, 12))
+        self.info_labels.append(lbl)
+
+    # ──────────────────────────────────────────────────────
+    # ПЕРЕКЛЮЧЕНИЕ ЭКРАНОВ
+    # ──────────────────────────────────────────────────────
+    def show_downloader_view(self):
+        self.info_scroll.pack_forget()
+        self.main_scroll.pack(fill="both", expand=True)
+        self.current_screen = "downloader"
+        self.btn_nav_info.configure(
+            text="Справка",
+            fg_color=SURFACE_CARD, hover_color=SURFACE_CARD_BORDER,
+            text_color=TEXT_SECONDARY)
+        self.lbl_header_sub.configure(
+            text="Мультимедийный комбайн: YouTube • VK • Instagram")
+
+    def show_info_view(self):
+        self.main_scroll.pack_forget()
+        self.info_scroll.pack(fill="both", expand=True)
+        self.current_screen = "info"
+        self.btn_nav_info.configure(
+            text="Назад",
+            fg_color=ACCENT_BLUE, hover_color=ACCENT_BLUE_HOVER,
+            text_color=TEXT_MAIN)
+        self.lbl_header_sub.configure(text="Руководство по использованию")
+        self._on_window_configure()
+
+    def toggle_view(self):
+        if self.current_screen == "downloader":
+            self.show_info_view()
+        else:
+            self.show_downloader_view()
+
+    # ──────────────────────────────────────────────────────
+    # СТАТУС-БАР
+    # ──────────────────────────────────────────────────────
+    def create_statusbar(self):
+        ctk.CTkFrame(self, fg_color=SURFACE_CARD_BORDER, height=1,
+                     corner_radius=0).pack(fill="x", side="bottom")
+
+        sb = ctk.CTkFrame(self, fg_color=SURFACE_CARD, height=58,
+                          corner_radius=0)
+        sb.pack(fill="x", side="bottom")
+        sb.pack_propagate(False)
+
+        top = ctk.CTkFrame(sb, fg_color="transparent")
+        top.pack(fill="x", padx=14, pady=(8, 4))
+
+        left_sb = ctk.CTkFrame(top, fg_color="transparent")
+        left_sb.pack(side="left", fill="x", expand=True)
+
+        self.lbl_status_icon = ctk.CTkLabel(
+            left_sb, text="–", font=self.font_small,
+            text_color=TEXT_MUTED, width=18)
+        self.lbl_status_icon.pack(side="left", padx=(0, 6))
+
+        self.lbl_status_text = ctk.CTkLabel(
+            left_sb, text="Готов к работе", font=self.font_small,
+            text_color=TEXT_MUTED, anchor="w", justify="left")
+        self.lbl_status_text.pack(side="left", fill="x", expand=True)
+
+        right_sb = ctk.CTkFrame(top, fg_color="transparent")
+        right_sb.pack(side="right")
+
+        self.lbl_percentage = ctk.CTkLabel(
+            right_sb, text="", font=self.font_mono, text_color=TEXT_MUTED)
+        self.lbl_percentage.pack(side="right", padx=(6, 0))
+
+        self.btn_view_downloaded = ctk.CTkButton(
+            right_sb, text="Открыть папку", height=24, width=108,
+            corner_radius=4, font=self.font_small,
+            fg_color=SURFACE_CARD_BORDER, hover_color=ACCENT_BLUE,
+            text_color=TEXT_SECONDARY,
+            command=self.open_downloaded_folder)
+        self._folder_btn_visible = False
+
+        self.progressbar = ctk.CTkProgressBar(
+            sb, height=3, corner_radius=2,
+            fg_color=SURFACE_INNER,
+            progress_color=ACCENT_BLUE, mode="determinate")
+        self.progressbar.pack(fill="x", padx=14, pady=(0, 8))
+        self.progressbar.set(0)
+
+    # ──────────────────────────────────────────────────────
+    # ОБНОВЛЕНИЕ СТАТУС-БАРА (Thread-safe)
+    # ──────────────────────────────────────────────────────
+    _STATUS_MAP = {
+        "idle":    ("–",   TEXT_MUTED,      ACCENT_BLUE),
+        "working": ("...", TEXT_SECONDARY,   ACCENT_BLUE),
+        "success": ("OK",  STATUS_GREEN,     STATUS_GREEN),
+        "error":   ("!",   STATUS_RED,       STATUS_RED),
+        "warning": ("~",   STATUS_AMBER,     STATUS_AMBER),
+    }
+
+    def update_status(self, text: str, state: str = "idle",
+                      progress: float | None = None,
+                      percent_str: str = ""):
+        icon, text_color, bar_color = self._STATUS_MAP.get(
+            state, ("–", TEXT_MUTED, ACCENT_BLUE))
+
+        def _upd():
+            self.lbl_status_icon.configure(text=icon, text_color=text_color)
+            self.lbl_status_text.configure(text=text, text_color=text_color)
+            self.progressbar.configure(progress_color=bar_color)
+            if progress is not None:
+                self.progressbar.set(progress)
+            if percent_str:
+                self.lbl_percentage.configure(text=percent_str)
+            elif progress is not None:
+                self.lbl_percentage.configure(text=f"{int(progress * 100)}%")
+
+        self.after(0, _upd)
+
+    def _show_folder_button(self):
+        if not self._folder_btn_visible:
+            self.btn_view_downloaded.pack(side="right", padx=(0, 6))
+            self._folder_btn_visible = True
+
+    def _hide_folder_button(self):
+        if self._folder_btn_visible:
+            self.btn_view_downloaded.pack_forget()
+            self._folder_btn_visible = False
+
+    # ──────────────────────────────────────────────────────
+    # ЛОГИКА РЕЖИМОВ
+    # ──────────────────────────────────────────────────────
+    def on_mode_change(self, choice: str):
+        url = self.entry_url.get().strip()
+        detected = detect_url_type(url)
+
+        if "Автоопределение" in choice:
+            self._apply_smart_routing(detected)
+            self.update_status("Режим: Умное автоопределение (Smart)", state="idle")
+
+        elif "Видео" in choice:
+            self._auth_url = AUTH_URL_PHOTOS
+            self.card_token.pack_forget()
+            if not self.card_quality.winfo_ismapped():
+                self.card_quality.pack(fill="x", padx=2, pady=(0, 10), before=self.card_cookies)
+            self.update_status("Режим: видео / аудио (ВК / YouTube / Reels)", state="idle")
+
+        elif "Instagram" in choice:
+            self.card_token.pack_forget()
+            self.card_quality.pack_forget()
+            self.update_status("Режим: Instagram (Фото, Карусели, Reels, Stories)", state="idle")
+
+        elif "Фотографии" in choice:
+            self._auth_url = AUTH_URL_PHOTOS
+            self.card_quality.pack_forget()
+            if not self.card_token.winfo_ismapped():
+                self.card_token.pack(fill="x", padx=2, pady=(0, 10), before=self.card_cookies)
+            self.btn_auth.configure(fg_color=ACCENT_BLUE, hover_color=ACCENT_BLUE_HOVER)
+            self.lbl_token_hint.configure(
+                text="Токен извлекается автоматически из скопированной ссылки и сохраняется")
+            self._update_token_badge()
+            self.update_status("Режим: фотоальбомы ВКонтакте", state="idle")
+
+        elif "Музыка" in choice:
+            self._auth_url = AUTH_URL_MUSIC
+            avail = VKPYMUSIC_AVAILABLE
+            self.card_quality.pack_forget()
+            if not self.card_token.winfo_ismapped():
+                self.card_token.pack(fill="x", padx=2, pady=(0, 10), before=self.card_cookies)
+            self.btn_auth.configure(
+                fg_color=ACCENT_BLUE if avail else SURFACE_CARD_BORDER,
+                hover_color=ACCENT_BLUE_HOVER if avail else SURFACE_INNER_BORDER)
+            self.lbl_token_hint.configure(
+                text=("Токен запрашивается с правами на аудио (scope=audio). "
+                      "Вставьте ссылку после авторизации.")
+                if avail else
+                "Библиотека vkpymusic не установлена. Запустите: pip install vkpymusic")
+            self._update_token_badge()
+            self.update_status(
+                "Режим: музыка VK" if avail else "Ошибка: vkpymusic не найден",
+                state="idle" if avail else "error")
+
+        self.update_idletasks()
+
+    def _update_token_badge(self):
+        token = self.entry_token.get().strip()
+        mode = self.combo_mode.get()
+
+        if "Музыка" in mode and not VKPYMUSIC_AVAILABLE:
+            self.badge_token_status.configure(
+                text="Недоступно", text_color=STATUS_RED, fg_color=SURFACE_INNER)
+        elif token:
+            self.badge_token_status.configure(
+                text="Сохранён", text_color=STATUS_GREEN, fg_color=SURFACE_INNER)
+        else:
+            self.badge_token_status.configure(
+                text="Требуется", text_color=STATUS_AMBER, fg_color=SURFACE_INNER)
+
+    def _on_token_changed(self, event=None):
+        raw = self.entry_token.get().strip()
+        extracted = extract_token(raw)
+        if extracted != self.settings.vk_token:
+            self.settings.vk_token = extracted
+        self._update_token_badge()
+
+    # ──────────────────────────────────────────────────────
+    # АВТОРИЗАЦИЯ И ВЫБОР ПАПКИ
+    # ──────────────────────────────────────────────────────
+    def open_auth(self):
+        webbrowser.open(self._auth_url)
+        self.update_status(
+            "Браузер открыт. Скопируйте ссылку после подтверждения",
+            state="warning")
+
+    def choose_folder(self):
+        folder = filedialog.askdirectory(
+            title="Выберите папку для сохранения",
+            initialdir=self.download_path
+        )
+        if folder:
+            self.set_download_path(folder)
+            self.settings.download_path = folder
+            self.update_status(
+                f"Папка: {os.path.basename(self.download_path) or self.download_path}",
+                state="idle")
+
+    def set_download_path(self, folder: str):
+        self.download_path = os.path.normpath(folder)
+        self.entry_folder_path.configure(state="normal")
+        self.entry_folder_path.delete(0, "end")
+        self.entry_folder_path.insert(0, self.download_path)
+        self.entry_folder_path.configure(state="readonly")
+
+    def paste_clipboard(self, entry_widget):
+        try:
+            text = self.clipboard_get().strip()
+        except Exception:
+            return
+        if not text:
+            return
+
+        if entry_widget is self.entry_token:
+            text = extract_token(text)
+            self.settings.vk_token = text
+
+        try:
+            entry_widget.configure(state="normal")
+        except Exception:
+            pass
+        entry_widget.delete(0, "end")
+        entry_widget.insert(0, text)
+        entry_widget.focus_set()
+
+        if entry_widget is self.entry_token:
+            self._update_token_badge()
+        elif entry_widget is self.entry_url:
+            self._on_url_changed()
+
+        self.update_idletasks()
+
+        if entry_widget is self.entry_url:
+            detected = detect_url_type(text)
+            if detected.get("engine") == "ytdlp":
+                self.after(300, self.start_probe_quality_thread)
+
+    def open_target_folder(self):
+        open_folder(self.download_path)
+
+    def open_downloaded_folder(self):
+        target = (self.last_saved_folder
+                  if self.last_saved_folder and os.path.exists(self.last_saved_folder)
+                  else self.download_path)
+        open_folder(target)
+
+    # ──────────────────────────────────────────────────────
+    # УПРАВЛЕНИЕ ЗАНЯТОСТЬЮ UI
+    # ──────────────────────────────────────────────────────
+    def _set_ui_busy_main(self, busy: bool):
+        self.is_downloading = busy
+        state = "disabled" if busy else "normal"
+
+        if busy:
+            self.btn_download.configure(
+                state="normal",
+                text="Остановить скачивание",
+                fg_color=STATUS_RED,
+                hover_color="#A83232"
+            )
+        else:
+            self.btn_download.configure(
+                state="normal",
+                text="Начать скачивание",
+                fg_color=ACCENT_BLUE,
+                hover_color=ACCENT_BLUE_HOVER
+            )
+
+        self.combo_mode.configure(state=state)
+        if hasattr(self, "combo_quality"):
+            self.combo_quality.configure(state=state)
+        if hasattr(self, "btn_probe_quality"):
+            self.btn_probe_quality.configure(state=state)
+        if hasattr(self, "chk_playlist"):
+            self.chk_playlist.configure(state=state)
+
+        if busy:
+            self._hide_folder_button()
+
+    def _set_busy(self, busy: bool):
+        self.after(0, self._set_ui_busy_main, busy)
+
+    # ──────────────────────────────────────────────────────
+    # ЗАПУСК И ОТМЕНА СКАЧИВАНИЯ
+    # ──────────────────────────────────────────────────────
+    def start_download_thread(self):
+        # Если загрузка уже идёт — кнопка работает как "Остановить скачивание"
+        if self.is_downloading:
+            self.cancel_event.set()
+            self.btn_download.configure(text="Отмена...", state="disabled")
+            self.update_status("Остановка скачивания...", state="warning")
+            return
+
+        self.cancel_event.clear()
+        self._set_ui_busy_main(True)
+        threading.Thread(target=self._download_process, daemon=True).start()
+
+    def _download_process(self):
+        mode = self.combo_mode.get()
+        target_url = self.entry_url.get().strip()
+        token_raw = self.entry_token.get().strip()
+        cookies_path = self.settings.cookies_path
+
+        if not target_url:
+            self.update_status("Ошибка: вставьте ссылку на источник", state="error")
+            self._set_busy(False)
+            return
+
+        self.update_status("Определение источника...", state="working", progress=0, percent_str="0%")
+
+        # Определение целевого движка загрузки
+        if "Автоопределение" in mode:
+            detected = detect_url_type(target_url)
+            engine = detected["engine"]
+        elif "Видео" in mode:
+            engine = "ytdlp"
+        elif "Instagram" in mode:
+            engine = "insta"
+        elif "Фотографии" in mode:
+            engine = "vk_photos"
+        elif "Музыка" in mode:
+            engine = "vk_music"
+        else:
+            engine = "ytdlp"
+
+        allow_playlist = bool(self.chk_playlist.get()) if hasattr(self, "chk_playlist") else False
+
+        try:
+            if engine == "insta":
+                saved_folder = download_instagram(
+                    url=target_url,
+                    download_path=self.download_path,
+                    cookies_path=cookies_path,
+                    status_callback=self.update_status,
+                    cancel_event=self.cancel_event
+                )
+                self.last_saved_folder = saved_folder
+                self.after(0, self._show_folder_button)
+
+            elif engine == "vk_photos":
+                saved_folder = download_vk_photos(
+                    token_raw=token_raw,
+                    url=target_url,
+                    download_path=self.download_path,
+                    progress_callback=self.update_status,
+                    cancel_event=self.cancel_event
+                )
+                self.last_saved_folder = saved_folder
+                self.after(0, self._show_folder_button)
+
+            elif engine == "vk_music":
+                saved_folder = download_vk_music(
+                    token_raw=token_raw,
+                    url=target_url,
+                    download_path=self.download_path,
+                    progress_callback=self.update_status,
+                    cancel_event=self.cancel_event
+                )
+                self.last_saved_folder = saved_folder
+                self.after(0, self._show_folder_button)
+
+            else:  # ytdlp
+                quality_choice = self.combo_quality.get()
+                title = download_video(
+                    url=target_url,
+                    download_path=self.download_path,
+                    quality_choice=quality_choice,
+                    progress_callback=self.update_status,
+                    cookies_path=cookies_path,
+                    cancel_event=self.cancel_event,
+                    allow_playlist=allow_playlist
+                )
+                self.last_saved_folder = self.download_path
+                self.update_status(f"Готово: {title[:40]}", state="success",
+                                   progress=1.0, percent_str="100%")
+                self.after(0, self._show_folder_button)
+
+        except DownloadCancelledError:
+            self.update_status("Загрузка отменена пользователем", state="warning")
+        except Exception as e:
+            msg = str(e)
+            if not msg.startswith("Ошибка") and not msg.startswith("Требуется") and not msg.startswith("Instagram"):
+                msg = f"Ошибка: {msg}"
+            self.update_status(msg[:80], state="error")
+        finally:
+            self._set_busy(False)

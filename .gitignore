@@ -1,0 +1,44 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# C extensions
+*.so
+
+# Distribution / packaging
+dist/
+build/
+*.egg-info/
+.installed.cfg
+*.spec
+!MediaHarvester.spec
+
+# Logs
+logs/
+*.log
+
+# Environments and local configs
+.env
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# App settings & credentials
+settings.json
+cookies.txt
+*cookies*.txt
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Downloaded test media
+VK_Album_*/
+downloads/
+
