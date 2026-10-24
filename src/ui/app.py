@@ -1,5 +1,6 @@
 import os
 import threading
+import time
 import webbrowser
 from tkinter import filedialog
 import customtkinter as ctk
@@ -32,6 +33,7 @@ from src.utils.helpers import (
     DownloadCancelledError,
 )
 from src.utils.ytdlp_updater import current_version as ytdlp_version, check_for_update
+from src.core.vk_auth import login_in_window, find_auth_result, fetch_user_name
 from src.utils.errors import explain_error
 from src.utils.logger import setup_logging, get_logger, get_log_dir, register_secret, redact
 from src.utils.report import build_report, format_failures
@@ -118,6 +120,9 @@ class MediaHarvesterApp(ctk.CTk):
         self.last_errors: list[QueueItem] = []
         self.current_screen: str = "downloader"
         self._auth_url: str = AUTH_URL_PHOTOS
+        self._login_busy: bool = False
+        self._login_cancel = threading.Event()
+        self._clipboard_watch_until: float = 0.0
 
         # Построение интерфейса
         self.create_header()
@@ -585,17 +590,24 @@ class MediaHarvesterApp(ctk.CTk):
         self.badge_token_status.pack(side="right")
 
         self.btn_auth = ctk.CTkButton(
-            self.card_token, text="Получить токен в браузере",
+            self.card_token, text="Войти через ВКонтакте",
             height=34, corner_radius=6, font=self.font_main,
             fg_color=ACCENT_BLUE, hover_color=ACCENT_BLUE_HOVER,
-            text_color=TEXT_MAIN, command=self.open_auth)
-        self.btn_auth.pack(fill="x", padx=14, pady=(0, 8))
+            text_color=TEXT_MAIN, command=self.start_vk_login)
+        self.btn_auth.pack(fill="x", padx=14, pady=(0, 4))
+
+        self.btn_auth_browser = ctk.CTkButton(
+            self.card_token, text="Окно не открывается? Войти через обычный браузер",
+            height=24, corner_radius=4, font=self.font_small,
+            fg_color="transparent", hover_color=SURFACE_CARD_BORDER,
+            text_color=TEXT_MUTED, command=self.start_browser_login)
+        self.btn_auth_browser.pack(fill="x", padx=14, pady=(0, 8))
 
         erow = ctk.CTkFrame(self.card_token, fg_color="transparent")
         erow.pack(fill="x", padx=14, pady=(0, 6))
         self.entry_token = ctk.CTkEntry(
             erow,
-            placeholder_text="Вставьте скопированную ссылку или токен...",
+            placeholder_text="...или вставьте ссылку/токен вручную",
             font=self.font_main, height=34, corner_radius=6,
             fg_color=SURFACE_INNER, border_width=1,
             border_color=SURFACE_INNER_BORDER,
@@ -614,7 +626,7 @@ class MediaHarvesterApp(ctk.CTk):
 
         self.lbl_token_hint = ctk.CTkLabel(
             self.card_token,
-            text="Токен извлекается автоматически из скопированной ссылки и сохраняется",
+            text=self._TOKEN_HINT,
             font=self.font_subtitle, text_color=TEXT_MUTED, justify="left")
         self.lbl_token_hint.pack(anchor="w", padx=14, pady=(0, 10))
 
@@ -930,9 +942,13 @@ class MediaHarvesterApp(ctk.CTk):
 
         self._info_section(
             "6. Скачивание музыки и фотоальбомов ВКонтакте",
-            "Для доступа к фотоальбомам и музыке VK нажмите «Получить токен в браузере». "
-            "После подтверждения скопируйте ссылку и нажмите «Вставить» — токен сохранится "
-            "в настройках. Для музыки поддерживаются плейлисты и аудиозаписи профилей до 1000 треков.")
+            "Для доступа к фотоальбомам и музыке VK нажмите «Войти через ВКонтакте»: откроется окно "
+            "со страницей входа VK, после подтверждения доступа окно закроется само, а токен сохранится. "
+            "Логин и пароль программа не видит и не хранит; сессия в окне не сохраняется.\n"
+            "Если окно не открывается, используйте «Войти через обычный браузер»: после подтверждения "
+            "скопируйте адрес страницы (Ctrl+L, Ctrl+C) — токен подхватится из буфера обмена автоматически.\n"
+            "Для музыки нужен вход именно в режиме «Музыка» (другое право доступа). "
+            "Поддерживаются плейлисты и аудиозаписи профилей до 1000 треков.")
 
         ctk.CTkButton(
             self.info_scroll, text="Вернуться к скачиванию", height=42,
@@ -1190,8 +1206,7 @@ class MediaHarvesterApp(ctk.CTk):
             if not self.card_token.winfo_ismapped():
                 self.card_token.pack(fill="x", padx=2, pady=(0, 10), before=self.card_cookies)
             self.btn_auth.configure(fg_color=ACCENT_BLUE, hover_color=ACCENT_BLUE_HOVER)
-            self.lbl_token_hint.configure(
-                text="Токен извлекается автоматически из скопированной ссылки и сохраняется")
+            self.lbl_token_hint.configure(text=self._TOKEN_HINT)
             self._update_token_badge()
             self.update_status("Режим: фотоальбомы ВКонтакте", state="idle")
 
@@ -1205,8 +1220,8 @@ class MediaHarvesterApp(ctk.CTk):
                 fg_color=ACCENT_BLUE if avail else SURFACE_CARD_BORDER,
                 hover_color=ACCENT_BLUE_HOVER if avail else SURFACE_INNER_BORDER)
             self.lbl_token_hint.configure(
-                text=("Токен запрашивается с правами на аудио (scope=audio). "
-                      "Вставьте ссылку после авторизации.")
+                text=("Для музыки токен запрашивается с правом на аудио — "
+                      "войдите заново, если раньше входили в режиме фото.")
                 if avail else
                 "Библиотека vkpymusic не установлена. Запустите: pip install vkpymusic")
             self._update_token_badge()
@@ -1241,11 +1256,109 @@ class MediaHarvesterApp(ctk.CTk):
     # ──────────────────────────────────────────────────────
     # АВТОРИЗАЦИЯ И ВЫБОР ПАПКИ
     # ──────────────────────────────────────────────────────
-    def open_auth(self):
+    _TOKEN_HINT = ("Нажмите «Войти»: откроется окно ВКонтакте, токен сохранится сам "
+                   "(пароль программе не передаётся)")
+
+    def _set_login_busy(self, busy: bool):
+        self._login_busy = busy
+        self.btn_auth.configure(text="Отменить вход" if busy else "Войти через ВКонтакте")
+        self.btn_auth_browser.configure(state="disabled" if busy else "normal")
+
+    def start_vk_login(self):
+        """Окно входа VK; токен забирается автоматически после подтверждения."""
+        if self._login_busy:
+            self._login_cancel.set()
+            self._clipboard_watch_until = 0.0
+            return
+        self._login_cancel.clear()
+        self._set_login_busy(True)
+        self.update_status("Открыто окно входа ВКонтакте. Подтвердите доступ...", state="working")
+        url = self._auth_url
+
+        def _worker():
+            outcome = login_in_window(url, self._login_cancel)
+            self.after(0, lambda: self._finish_vk_login(outcome))
+
+        threading.Thread(target=_worker, daemon=True).start()
+
+    def _finish_vk_login(self, outcome):
+        log.info("Вход VK (окно): %s %s", outcome.status, outcome.detail)
+        self._set_login_busy(False)
+        if outcome.status == "ok":
+            self._accept_vk_token(outcome.result.token)
+        elif outcome.status == "unavailable":
+            # Окно WebView2 недоступно — запасной путь через обычный браузер
+            self.update_status("Окно входа недоступно, открываю обычный браузер...", state="warning")
+            self.start_browser_login()
+        elif outcome.status == "denied":
+            self.update_status("ВКонтакте отклонил вход: " + (outcome.detail or "доступ не выдан")[:50],
+                               state="error")
+        elif outcome.status == "timeout":
+            self.update_status("Время на вход истекло. Нажмите «Войти» ещё раз", state="warning")
+        else:  # closed / cancelled
+            self.update_status("Вход отменён", state="idle")
+
+    def start_browser_login(self):
+        """Запасной вход: обычный браузер + автоматический захват адреса из буфера обмена."""
+        if self._login_busy:
+            return
+        self._login_cancel.clear()
+        self._set_login_busy(True)
         webbrowser.open(self._auth_url)
+        self._clipboard_watch_until = time.monotonic() + 600
         self.update_status(
-            "Браузер открыт. Скопируйте ссылку после подтверждения",
+            "Подтвердите доступ в браузере, затем скопируйте адрес страницы (Ctrl+L, Ctrl+C) — токен подхватится сам",
             state="warning")
+        self.after(700, self._watch_clipboard)
+
+    def _watch_clipboard(self):
+        if not self._login_busy:
+            return
+        if self._login_cancel.is_set() or time.monotonic() > self._clipboard_watch_until:
+            timed_out = not self._login_cancel.is_set()
+            self._set_login_busy(False)
+            self.update_status(
+                "Время на вход истекло" if timed_out else "Вход отменён",
+                state="warning" if timed_out else "idle")
+            return
+        try:
+            text = self.clipboard_get()
+        except Exception:
+            text = ""
+        result = find_auth_result(text)
+        if result:
+            self._set_login_busy(False)
+            self.clipboard_clear()  # токен не должен оставаться в буфере обмена
+            self._accept_vk_token(result.token)
+            return
+        self.after(700, self._watch_clipboard)
+
+    def _accept_vk_token(self, token: str):
+        """Сохраняет токен, показывает его в поле и проверяет владельца в фоне."""
+        register_secret(token)
+        self.settings.vk_token = token
+        self.entry_token.delete(0, "end")
+        self.entry_token.insert(0, token)
+        self._update_token_badge()
+        try:
+            self.deiconify()
+            self.lift()
+            self.focus_force()
+        except Exception:
+            pass
+        self.update_status("Токен сохранён. Проверяю вход...", state="working")
+
+        def _verify():
+            try:
+                name = fetch_user_name(token)
+            except Exception:
+                self.after(0, lambda: self.update_status(
+                    "ВКонтакте не принял токен. Войдите заново", state="error"))
+                return
+            text = f"Вход выполнен: {name}" if name else "Токен сохранён"
+            self.after(0, lambda: self.update_status(text, state="success"))
+
+        threading.Thread(target=_verify, daemon=True).start()
 
     def choose_folder(self):
         folder = filedialog.askdirectory(

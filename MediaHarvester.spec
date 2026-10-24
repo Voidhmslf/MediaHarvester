@@ -11,9 +11,10 @@ hiddenimports = [
     'PIL._tkinter_finder',
     'curl_cffi',
     'customtkinter',
+    'webview',
 ]
 
-for package_name in ('customtkinter', 'imageio_ffmpeg', 'gallery_dl', 'vkpymusic'):
+for package_name in ('customtkinter', 'imageio_ffmpeg', 'gallery_dl', 'vkpymusic', 'webview', 'clr_loader', 'pythonnet'):
     d, b, h = collect_all(package_name)
     datas += d
     binaries += b

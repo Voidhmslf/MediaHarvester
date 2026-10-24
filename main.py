@@ -7,6 +7,11 @@ if __name__ == "__main__":
         sys.argv = ["gallery-dl"] + sys.argv[2:]
         sys.exit(gallery_dl.main())
 
+    # Окно входа в VK запускается отдельным процессом: pywebview требует главный поток
+    if len(sys.argv) > 2 and sys.argv[1] == "--vk-login-worker":
+        from src.core.vk_auth import run_login_window, BLANK_PREFIX
+        sys.exit(run_login_window(sys.argv[2], sys.argv[3] if len(sys.argv) > 3 else BLANK_PREFIX))
+
     # Подключаем скачанную свежую версию yt-dlp (если есть) до импорта остального кода
     try:
         from src.utils.ytdlp_updater import activate_override
