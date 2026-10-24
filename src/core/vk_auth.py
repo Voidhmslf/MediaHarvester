@@ -68,9 +68,9 @@ def parse_auth_url(url: str) -> VkAuthResult | None:
 
 
 def find_auth_result(text: str, success_prefix: str = BLANK_PREFIX) -> VkAuthResult | None:
-    """Ищет в тексте (например, в буфере обмена) адрес-результат авторизации VK."""
+    """Ищет в тексте (например, в буфере обмена) адрес-результат авторизации VK (vk.com или vk.ru)."""
     for token in (text or "").split():
-        if token.startswith(success_prefix):
+        if _is_success_url(token, success_prefix):
             result = parse_auth_url(token)
             if result and result.token:
                 return result
@@ -87,10 +87,20 @@ def _is_success_url(url: str, success_prefix: str) -> bool:
     if url.startswith(success_prefix):
         return True
     # VK может отдавать результат на любом своём домене (vk.com, vk.ru) — важно только наличие токена/ошибки
-    host = (urlparse(url).hostname or "").lower()
-    if host == "vk.com" or host.endswith(".vk.com") or host == "vk.ru" or host.endswith(".vk.ru"):
+    if _is_vk_host(url):
         return parse_auth_url(url) is not None
     return False
+
+
+def _is_vk_host(url: str) -> bool:
+    host = (urlparse(url or "").hostname or "").lower()
+    return host in ("vk.com", "vk.ru") or host.endswith((".vk.com", ".vk.ru"))
+
+
+def _is_static(url: str) -> bool:
+    path = urlparse(url or "").path.lower()
+    return path.endswith((".js", ".css", ".png", ".jpg", ".jpeg", ".gif", ".svg", ".webp", ".woff",
+                          ".woff2", ".ico", ".map", ".json"))
 
 
 def _url_shape(url: str) -> str:
@@ -128,7 +138,7 @@ def run_login_window(auth_url: str, success_prefix: str = BLANK_PREFIX) -> int:
         emit({"status": "unavailable", "detail": f"pywebview не загружен: {e}"})
         return EXIT_UNAVAILABLE
 
-    state = {"emitted": False, "last": None}
+    state = {"emitted": False, "last": None, "probed": False, "responses": 0, "requests": 0}
     lock = threading.Lock()
     _debug("окно входа запущено")
 
@@ -155,39 +165,103 @@ def run_login_window(auth_url: str, success_prefix: str = BLANK_PREFIX) -> int:
             emit({"status": "denied", "detail": result.error_description or result.error})
         window.destroy()
 
-    def current_url() -> str | None:
-        # Адрес из самой страницы надёжнее: он содержит фрагмент (#access_token=...)
+    def with_timeout(fn, timeout: float = 2.0):
+        """Вызов, который может повиснуть во время навигации (evaluate_js), не должен вешать слежение."""
+        box: list = []
+
+        def run() -> None:
+            try:
+                box.append(fn())
+            except Exception:
+                pass
+
+        t = threading.Thread(target=run, daemon=True)
+        t.start()
+        t.join(timeout)
+        return box[0] if box else None
+
+    def current_urls() -> list[str]:
+        """Адрес окна: из кэша pywebview и из самой страницы (там есть фрагмент #...)."""
+        urls: list[str] = []
+        url = with_timeout(window.get_current_url)
+        if isinstance(url, str) and url:
+            urls.append(url)
+        href = with_timeout(lambda: window.evaluate_js("window.location.href"))
+        if isinstance(href, str) and href and href not in urls:
+            urls.append(href)
+        return urls
+
+    def probe_blank_page() -> None:
+        """Страница-приёмник открыта, а токена в адресе нет: ищем его в записи навигации и referrer."""
+        if state["probed"]:
+            return
+        state["probed"] = True
+        script = ("JSON.stringify({nav: (performance.getEntriesByType('navigation')[0]||{}).name || '',"
+                  " ref: document.referrer || '', len: history.length, name: window.name || ''})")
+        raw = with_timeout(lambda: window.evaluate_js(script), 3.0)
         try:
-            href = window.evaluate_js("window.location.href")
-            if isinstance(href, str) and href:
-                return href
-        except Exception:
-            pass
-        try:
-            return window.get_current_url()
-        except Exception:
-            return None
+            info = json.loads(raw) if isinstance(raw, str) else (raw or {})
+        except ValueError:
+            info = {}
+        _debug(f"страница без токена: nav={_url_shape(info.get('nav', ''))} "
+               f"ref={_url_shape(info.get('ref', ''))} history={info.get('len')} "
+               f"window.name={'есть' if info.get('name') else 'пусто'}")
+        for candidate in (info.get("nav", ""), info.get("ref", ""), info.get("name", "")):
+            check(candidate, "probe")
 
     window = webview.create_window("Вход ВКонтакте", auth_url, width=470, height=700)
 
     def on_loaded() -> None:
-        check(current_url(), "loaded")
+        for url in current_urls():
+            check(url, "loaded")
 
     def poll() -> None:
-        failures = 0
+        empty_polls = 0
         while not state["emitted"]:
-            url = current_url()
-            failures = failures + 1 if url is None else 0
-            if failures > 40:  # окно закрыто
+            urls = current_urls()
+            empty_polls = empty_polls + 1 if not urls else 0
+            if empty_polls > 40:  # окно закрыто
                 return
-            check(url, "poll")
+            for url in urls:
+                check(url, "poll")
+                if url.startswith(("https://oauth.vk.", "http://oauth.vk.")) and "/blank.html" in url:
+                    if parse_auth_url(url) is None:
+                        probe_blank_page()
             time.sleep(0.25)
 
     def on_shown() -> None:
         threading.Thread(target=poll, daemon=True).start()
 
+    def on_response(response) -> None:
+        """Редирект VK приходит заголовком Location: в нём фрагмент с токеном виден целиком."""
+        try:
+            location = next((v for k, v in (response.headers or {}).items() if str(k).lower() == "location"), "")
+            if location or _is_vk_host(response.url) and not _is_static(response.url):
+                if state["responses"] < 150:
+                    state["responses"] += 1
+                    _debug(f"response {response.status_code} {_url_shape(response.url)}"
+                           + (f" -> {_url_shape(location)}" if location else ""))
+            if location:
+                check(location, "redirect")
+        except Exception as e:
+            _debug(f"on_response: {e}")
+
+    def on_request(request) -> None:
+        try:
+            if _is_vk_host(request.url) and not _is_static(request.url) and state["requests"] < 150:
+                state["requests"] += 1
+                _debug(f"request {request.method} {_url_shape(request.url)}")
+            check(request.url, "request")
+        except Exception as e:
+            _debug(f"on_request: {e}")
+
     window.events.loaded += on_loaded
     window.events.shown += on_shown
+    for event_name, handler in (("response_received", on_response), ("request_sent", on_request)):
+        try:
+            getattr(window.events, event_name).__iadd__(handler)
+        except Exception as e:
+            _debug(f"не удалось подписаться на {event_name}: {e}")
 
     try:
         # Без постоянного профиля: после закрытия окна cookie VK не остаются на диске
