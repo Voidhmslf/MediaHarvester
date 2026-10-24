@@ -80,10 +80,43 @@ def find_auth_result(text: str, success_prefix: str = BLANK_PREFIX) -> VkAuthRes
 # ──────────────────────────────────────────────────────────────
 # Окно входа (рабочий процесс)
 # ──────────────────────────────────────────────────────────────
+def _is_success_url(url: str, success_prefix: str) -> bool:
+    """Адрес, на который VK вернул результат авторизации (токен или ошибку)."""
+    if not url:
+        return False
+    if url.startswith(success_prefix):
+        return True
+    # VK может отдавать результат на любом своём домене (vk.com, vk.ru) — важно только наличие токена/ошибки
+    host = (urlparse(url).hostname or "").lower()
+    if host == "vk.com" or host.endswith(".vk.com") or host == "vk.ru" or host.endswith(".vk.ru"):
+        return parse_auth_url(url) is not None
+    return False
+
+
+def _url_shape(url: str) -> str:
+    """Адрес без значений параметров (токены не попадают в диагностику): host/path#имена,параметров."""
+    parsed = urlparse(url or "")
+    names = sorted(set(parse_qs(parsed.query)) | set(parse_qs(parsed.fragment)))
+    tail = f" [{','.join(names)}]" if names else ""
+    return f"{parsed.scheme}://{parsed.netloc}{parsed.path}{tail}"
+
+
+def _debug(message: str) -> None:
+    """Диагностика окна входа (только формы адресов, без значений) в logs/vk_login_debug.log."""
+    try:
+        from src.utils.logger import get_log_dir
+        with open(os.path.join(get_log_dir(), "vk_login_debug.log"), "a", encoding="utf-8") as f:
+            f.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} {message}\n")
+    except Exception:
+        pass
+
+
 def run_login_window(auth_url: str, success_prefix: str = BLANK_PREFIX) -> int:
     """
     Показывает окно с авторизацией VK и печатает в stdout одну JSON-строку с результатом.
     Выполняется в отдельном процессе (см. login_in_window).
+    Адрес окна проверяется и по событию загрузки, и опросом каждые 0.25 с: редирект VK
+    может прийти раньше, чем успеет сработать событие.
     """
     def emit(payload: dict) -> None:
         sys.stdout.write(json.dumps(payload, ensure_ascii=False) + "\n")
@@ -95,15 +128,26 @@ def run_login_window(auth_url: str, success_prefix: str = BLANK_PREFIX) -> int:
         emit({"status": "unavailable", "detail": f"pywebview не загружен: {e}"})
         return EXIT_UNAVAILABLE
 
-    state = {"emitted": False}
+    state = {"emitted": False, "last": None}
+    lock = threading.Lock()
+    _debug("окно входа запущено")
 
-    def check(url: str | None) -> None:
-        if state["emitted"] or not url or not url.startswith(success_prefix):
+    def check(url: str | None, source: str) -> None:
+        if not url:
+            return
+        if url != state["last"]:
+            state["last"] = url
+            _debug(f"{source}: {_url_shape(url)}")
+        if not _is_success_url(url, success_prefix):
             return
         result = parse_auth_url(url)
         if result is None:
             return
-        state["emitted"] = True
+        with lock:
+            if state["emitted"]:
+                return
+            state["emitted"] = True
+        _debug("результат получен: " + ("токен" if result.token else f"отказ ({result.error})"))
         if result.token:
             emit({"status": "ok", "token": result.token, "user_id": result.user_id,
                   "expires_in": result.expires_in})
@@ -111,25 +155,51 @@ def run_login_window(auth_url: str, success_prefix: str = BLANK_PREFIX) -> int:
             emit({"status": "denied", "detail": result.error_description or result.error})
         window.destroy()
 
+    def current_url() -> str | None:
+        # Адрес из самой страницы надёжнее: он содержит фрагмент (#access_token=...)
+        try:
+            href = window.evaluate_js("window.location.href")
+            if isinstance(href, str) and href:
+                return href
+        except Exception:
+            pass
+        try:
+            return window.get_current_url()
+        except Exception:
+            return None
+
     window = webview.create_window("Вход ВКонтакте", auth_url, width=470, height=700)
 
     def on_loaded() -> None:
-        try:
-            check(window.get_current_url())
-        except Exception:
-            pass
+        check(current_url(), "loaded")
+
+    def poll() -> None:
+        failures = 0
+        while not state["emitted"]:
+            url = current_url()
+            failures = failures + 1 if url is None else 0
+            if failures > 40:  # окно закрыто
+                return
+            check(url, "poll")
+            time.sleep(0.25)
+
+    def on_shown() -> None:
+        threading.Thread(target=poll, daemon=True).start()
 
     window.events.loaded += on_loaded
+    window.events.shown += on_shown
 
     try:
         # Без постоянного профиля: после закрытия окна cookie VK не остаются на диске
         webview.start(gui="edgechromium" if sys.platform == "win32" else None, private_mode=True)
     except Exception as e:
+        _debug(f"webview.start упал: {e}")
         if not state["emitted"]:
             emit({"status": "unavailable", "detail": f"окно входа не запустилось: {e}"})
             return EXIT_UNAVAILABLE
 
     if not state["emitted"]:
+        _debug("окно закрыто пользователем")
         emit({"status": "closed"})
     return EXIT_OK
 

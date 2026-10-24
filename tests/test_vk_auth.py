@@ -4,8 +4,8 @@ import socketserver
 import threading
 import unittest
 
-from src.core.vk_auth import (BLANK_PREFIX, LoginOutcome, VkAuthResult, find_auth_result,
-                              login_in_window, parse_auth_url)
+from src.core.vk_auth import (BLANK_PREFIX, LoginOutcome, VkAuthResult, _is_success_url, _url_shape,
+                              find_auth_result, login_in_window, parse_auth_url)
 
 try:
     import webview  # noqa: F401
@@ -32,6 +32,23 @@ class ParseTests(unittest.TestCase):
         self.assertEqual(find_auth_result(text).token, "TOK123456")
         self.assertIsNone(find_auth_result("https://evil.test/blank.html#access_token=TOK"))
         self.assertIsNone(find_auth_result("просто текст"))
+
+
+class SuccessUrlTests(unittest.TestCase):
+    def test_vk_hosts_with_token_are_accepted_even_if_domain_changes(self):
+        for host in ("oauth.vk.com", "oauth.vk.ru", "id.vk.com"):
+            url = f"https://{host}/blank.html#access_token=TOK&user_id=1"
+            self.assertTrue(_is_success_url(url, BLANK_PREFIX), url)
+
+    def test_plain_vk_pages_and_foreign_hosts_are_rejected(self):
+        self.assertFalse(_is_success_url("https://oauth.vk.com/authorize?client_id=1", BLANK_PREFIX))
+        self.assertFalse(_is_success_url("https://evil.test/blank.html#access_token=TOK", BLANK_PREFIX))
+        self.assertFalse(_is_success_url("https://notvk.com/x#access_token=TOK", BLANK_PREFIX))
+
+    def test_diagnostic_shape_hides_values(self):
+        shape = _url_shape("https://oauth.vk.com/blank.html#access_token=SECRET&user_id=5")
+        self.assertNotIn("SECRET", shape)
+        self.assertIn("access_token", shape)
 
 
 class _Handler(http.server.BaseHTTPRequestHandler):
