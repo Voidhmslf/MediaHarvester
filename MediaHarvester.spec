@@ -32,7 +32,14 @@ a = Analysis(
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=[],
+    # Пакеты из окружения разработки, которые приложению не нужны (научный стек, Jupyter/IPython, lxml).
+    # selenium, trio, rich, av, cryptography, curl_cffi и т.п. НЕ исключать: их требуют vkpymusic и yt-dlp.
+    excludes=[
+        'scipy', 'pandas', 'numpy', 'matplotlib',
+        'IPython', 'ipykernel', 'ipython_pygments_lexers', 'jupyter_client', 'jupyter_core',
+        'jedi', 'parso', 'prompt_toolkit', 'zmq', 'debugpy', 'tornado', 'nbformat', 'traitlets',
+        'lxml', 'jinja2', 'pytest',
+    ],
     noarchive=False,
     optimize=0,
 )
