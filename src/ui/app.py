@@ -30,7 +30,8 @@ from src.utils.helpers import (
     open_folder,
     DownloadCancelledError,
 )
-from src.core.router import detect_url_type
+from src.core.router import detect_url_type, gallery_platform_name
+from src.core.gallery_engine import download_gallery
 from src.core.download_queue import (
     QueueItem,
     parse_urls,
@@ -190,7 +191,7 @@ class MediaHarvesterApp(ctk.CTk):
         ctk.CTkLabel(meta, text="MediaHarvester", font=self.font_title,
                      text_color=TEXT_MAIN).pack(anchor="w")
         self.lbl_header_sub = ctk.CTkLabel(
-            meta, text="Мультимедийный комбайн: YouTube • VK • Instagram",
+            meta, text="Мультимедийный комбайн: YouTube • VK • Instagram • TikTok • X и другие",
             font=self.font_subtitle, text_color=TEXT_MUTED)
         self.lbl_header_sub.pack(anchor="w")
 
@@ -288,7 +289,7 @@ class MediaHarvesterApp(ctk.CTk):
         erow.pack(fill="x", padx=14, pady=(0, 6))
         self.entry_url = ctk.CTkEntry(
             erow,
-            placeholder_text="Вставьте ссылку (YouTube, Instagram, VK...)",
+            placeholder_text="Вставьте ссылку (YouTube, TikTok, Instagram, VK, X...)",
             font=self.font_main, height=34, corner_radius=6,
             fg_color=SURFACE_INNER, border_width=1,
             border_color=SURFACE_INNER_BORDER,
@@ -326,7 +327,7 @@ class MediaHarvesterApp(ctk.CTk):
 
         self.lbl_url_hint = ctk.CTkLabel(
             self.card_url,
-            text=("Поддерживаются видео YouTube, посты и Reels Instagram, фото и музыка VK. "
+            text=("Поддерживаются YouTube, TikTok, Instagram, X, Pinterest, Reddit, SoundCloud, фото и музыка VK. "
                   "Можно вставить сразу несколько ссылок — они попадут в очередь"),
             font=self.font_subtitle, text_color=TEXT_MUTED, justify="left")
         self.lbl_url_hint.pack(anchor="w", padx=14, pady=(0, 10))
@@ -665,7 +666,7 @@ class MediaHarvesterApp(ctk.CTk):
             if not self.card_token.winfo_ismapped():
                 self.card_token.pack(fill="x", padx=2, pady=(0, 10), before=self.card_cookies)
             self._update_token_badge()
-        elif engine == "insta":
+        elif engine in ("insta", "gallery"):
             self.card_quality.pack_forget()
             self.card_token.pack_forget()
         elif engine == "ytdlp":
@@ -796,9 +797,17 @@ class MediaHarvesterApp(ctk.CTk):
         self._info_section(
             "1. Умное автоопределение (Smart Mode)",
             "Вставьте любую ссылку на видео, пост или музыку — MediaHarvester "
-            "самостоятельно определит платформу (YouTube, Instagram, VK) "
+            "самостоятельно определит платформу (YouTube, TikTok, Instagram, X, Pinterest, Reddit, SoundCloud, VK) "
             "и подберёт оптимальный модуль скачивания без необходимости "
             "вручную переключать режим.")
+
+        self._info_section(
+            "Другие платформы: TikTok, X, Pinterest, Reddit, SoundCloud",
+            "Просто вставьте ссылку — тип определится сам. Видео берутся через yt-dlp, фото и галереи "
+            "через gallery-dl, и программа сама переключается между ними, если пост оказался не тем.\n"
+            "Ссылки на списки (плейлист SoundCloud, профиль TikTok) скачиваются целиком. "
+            "Страницы-ленты (доска Pinterest, профиль X, сабреддит) ограничены первыми 500 файлами. "
+            "Для X и закрытого контента может понадобиться cookies.txt.")
 
         self._info_section(
             "Очередь ссылок",
@@ -877,7 +886,7 @@ class MediaHarvesterApp(ctk.CTk):
             fg_color=SURFACE_CARD, hover_color=SURFACE_CARD_BORDER,
             text_color=TEXT_SECONDARY)
         self.lbl_header_sub.configure(
-            text="Мультимедийный комбайн: YouTube • VK • Instagram")
+            text="Мультимедийный комбайн: YouTube • VK • Instagram • TikTok • X и другие")
 
     def show_info_view(self):
         self.main_scroll.pack_forget()
@@ -1008,6 +1017,11 @@ class MediaHarvesterApp(ctk.CTk):
             self.card_token.pack_forget()
             self.card_quality.pack_forget()
             self.update_status("Режим: Instagram (Фото, Карусели, Reels, Stories)", state="idle")
+
+        elif "Галереи" in choice:
+            self.card_token.pack_forget()
+            self.card_quality.pack_forget()
+            self.update_status("Режим: галереи и посты (Pinterest, X, Reddit, TikTok)", state="idle")
 
         elif "Фотографии" in choice:
             self._auth_url = AUTH_URL_PHOTOS
@@ -1273,12 +1287,15 @@ class MediaHarvesterApp(ctk.CTk):
     def _download_one(self, target_url: str, opts: dict, cb) -> str:
         """Скачивает одну ссылку нужным движком. Возвращает путь к папке; ошибки — исключением."""
         mode = opts["mode"]
+        detected = detect_url_type(target_url)
         if "Автоопределение" in mode:
-            engine = detect_url_type(target_url)["engine"]
+            engine = detected["engine"]
         elif "Видео" in mode:
             engine = "ytdlp"
         elif "Instagram" in mode:
             engine = "insta"
+        elif "Галереи" in mode:
+            engine = "gallery"
         elif "Фотографии" in mode:
             engine = "vk_photos"
         elif "Музыка" in mode:
@@ -1295,6 +1312,16 @@ class MediaHarvesterApp(ctk.CTk):
                 cookies_path=opts["cookies_path"],
                 status_callback=cb,
                 cancel_event=self.cancel_event
+            )
+        if engine == "gallery":
+            return download_gallery(
+                url=target_url,
+                download_path=download_path,
+                platform_name=gallery_platform_name(target_url) or "Gallery",
+                cookies_path=opts["cookies_path"],
+                status_callback=cb,
+                cancel_event=self.cancel_event,
+                listing=bool(detected.get("listing")),
             )
         if engine == "vk_photos":
             return download_vk_photos(
@@ -1320,7 +1347,8 @@ class MediaHarvesterApp(ctk.CTk):
             progress_callback=cb,
             cookies_path=opts["cookies_path"],
             cancel_event=self.cancel_event,
-            allow_playlist=opts["allow_playlist"]
+            # Плейлист включается и сам, если ссылка ведёт на список (SoundCloud set, профиль TikTok)
+            allow_playlist=opts["allow_playlist"] or bool(detected.get("playlist"))
         )
         cb(f"Готово: {title[:40]}", "success", 1.0, "100%")
         return download_path

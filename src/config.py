@@ -42,6 +42,7 @@ CONTENT_MODES = [
     "Автоопределение (Smart)",
     "Видео / Аудио (YouTube, VK, IG Reels)",
     "Instagram (Фото, Карусели, Reels, Stories)",
+    "Галереи и посты (Pinterest, X, Reddit, TikTok)",
     "Фотографии ВК (Альбом)",
     "Музыка ВК (Плейлист / Профиль)",
 ]

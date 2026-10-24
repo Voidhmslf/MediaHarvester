@@ -3,6 +3,7 @@ import threading
 from typing import Callable, Any
 import yt_dlp
 from src.utils.helpers import FFMPEG_PATH, DownloadCancelledError
+from src.core.router import gallery_platform_name
 
 
 def get_video_format_spec(choice: str) -> tuple[str, list[dict[str, Any]]]:
@@ -76,7 +77,8 @@ def download_video(
     progress_callback: Callable[[str, str, float | None, str], None],
     cookies_path: str = "",
     cancel_event: threading.Event | None = None,
-    allow_playlist: bool = False
+    allow_playlist: bool = False,
+    allow_gallery_fallback: bool = True
 ) -> str:
     """
     Скачивает видео или аудио с помощью yt-dlp.
@@ -141,25 +143,31 @@ def download_video(
         if "ERROR:" in clean_msg:
             clean_msg = clean_msg.split("ERROR:")[-1].strip()
 
-        # Автоматический перехват фото/каруселей Instagram, попавших в yt-dlp
-        is_insta = "instagram.com" in url or "instagr.am" in url
+        # Автоматический перехват фото/каруселей, попавших в yt-dlp (Instagram, X, TikTok, Reddit...)
+        platform = gallery_platform_name(url) if allow_gallery_fallback else None
         no_video = any(phrase in raw_msg.lower() for phrase in (
             "no video formats found",
             "there is no video in this post",
             "no video",
             "is not a video"
         ))
-        if is_insta and no_video:
-            progress_callback("Обнаружен фотопост Instagram. Переключение на движок галереи...", "working", None, "")
-            from src.core.insta_engine import download_instagram
-            download_instagram(
+        auth_error = any(phrase in raw_msg.lower() for phrase in (
+            "private", "sign in", "login", "confirm your age", "not available in your country",
+        ))
+        # Instagram переключаем только при явном «нет видео»; для остальных — при любой не-авторизационной ошибке
+        if platform and (no_video if platform == "Instagram" else not auth_error):
+            progress_callback(f"Это не видео {platform}. Переключение на движок галереи...", "working", None, "")
+            from src.core.gallery_engine import download_gallery
+            download_gallery(
                 url=url,
                 download_path=download_path,
+                platform_name=platform,
                 cookies_path=cookies_path,
                 status_callback=progress_callback,
-                cancel_event=cancel_event
+                cancel_event=cancel_event,
+                ytdlp_fallback=False,  # иначе gallery-dl вернёт нас сюда же
             )
-            return "Instagram Photo / Carousel"
+            return f"{platform} Photo / Gallery"
 
         if "Video unavailable" in raw_msg or "This video is unavailable" in raw_msg:
             err_text = "Видео недоступно или удалено"
