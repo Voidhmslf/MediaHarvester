@@ -593,15 +593,15 @@ class MediaHarvesterApp(ctk.CTk):
             self.card_token, text="Войти через ВКонтакте",
             height=34, corner_radius=6, font=self.font_main,
             fg_color=ACCENT_BLUE, hover_color=ACCENT_BLUE_HOVER,
-            text_color=TEXT_MAIN, command=self.start_vk_login)
+            text_color=TEXT_MAIN, command=self.start_browser_login)
         self.btn_auth.pack(fill="x", padx=14, pady=(0, 4))
 
-        self.btn_auth_browser = ctk.CTkButton(
-            self.card_token, text="Окно не открывается? Войти через обычный браузер",
+        self.btn_auth_window = ctk.CTkButton(
+            self.card_token, text="Войти во встроенном окне (может не сработать)",
             height=24, corner_radius=4, font=self.font_small,
             fg_color="transparent", hover_color=SURFACE_CARD_BORDER,
-            text_color=TEXT_MUTED, command=self.start_browser_login)
-        self.btn_auth_browser.pack(fill="x", padx=14, pady=(0, 8))
+            text_color=TEXT_MUTED, command=self.start_vk_login)
+        self.btn_auth_window.pack(fill="x", padx=14, pady=(0, 8))
 
         erow = ctk.CTkFrame(self.card_token, fg_color="transparent")
         erow.pack(fill="x", padx=14, pady=(0, 6))
@@ -942,11 +942,11 @@ class MediaHarvesterApp(ctk.CTk):
 
         self._info_section(
             "6. Скачивание музыки и фотоальбомов ВКонтакте",
-            "Для доступа к фотоальбомам и музыке VK нажмите «Войти через ВКонтакте»: откроется окно "
-            "со страницей входа VK, после подтверждения доступа окно закроется само, а токен сохранится. "
-            "Логин и пароль программа не видит и не хранит; сессия в окне не сохраняется.\n"
-            "Если окно не открывается, используйте «Войти через обычный браузер»: после подтверждения "
-            "скопируйте адрес страницы (Ctrl+L, Ctrl+C) — токен подхватится из буфера обмена автоматически.\n"
+            "Для доступа к фотоальбомам и музыке VK нажмите «Войти через ВКонтакте»: откроется ваш браузер "
+            "со страницей VK. Нажмите «Продолжить», затем скопируйте адрес страницы (Ctrl+L, Ctrl+C) — "
+            "программа сама заберёт токен из буфера обмена и очистит его. "
+            "Логин и пароль программа не видит и не хранит.\n"
+            "Кнопка «Войти во встроенном окне» — запасной способ: VK ID не всегда отдаёт токен во встроенном окне.\n"
             "Для музыки нужен вход именно в режиме «Музыка» (другое право доступа). "
             "Поддерживаются плейлисты и аудиозаписи профилей до 1000 треков.")
 
@@ -1256,16 +1256,16 @@ class MediaHarvesterApp(ctk.CTk):
     # ──────────────────────────────────────────────────────
     # АВТОРИЗАЦИЯ И ВЫБОР ПАПКИ
     # ──────────────────────────────────────────────────────
-    _TOKEN_HINT = ("Нажмите «Войти»: откроется окно ВКонтакте, токен сохранится сам "
-                   "(пароль программе не передаётся)")
+    _TOKEN_HINT = ("Нажмите «Войти»: в браузере подтвердите доступ и скопируйте адрес страницы "
+                   "(Ctrl+L, Ctrl+C) — токен подхватится сам. Пароль программе не передаётся")
 
     def _set_login_busy(self, busy: bool):
         self._login_busy = busy
         self.btn_auth.configure(text="Отменить вход" if busy else "Войти через ВКонтакте")
-        self.btn_auth_browser.configure(state="disabled" if busy else "normal")
+        self.btn_auth_window.configure(state="disabled" if busy else "normal")
 
     def start_vk_login(self):
-        """Окно входа VK; токен забирается автоматически после подтверждения."""
+        """Встроенное окно входа VK (запасной способ: VK ID не всегда отдаёт токен во встроенном окне)."""
         if self._login_busy:
             self._login_cancel.set()
             self._clipboard_watch_until = 0.0
@@ -1299,15 +1299,18 @@ class MediaHarvesterApp(ctk.CTk):
             self.update_status("Вход отменён", state="idle")
 
     def start_browser_login(self):
-        """Запасной вход: обычный браузер + автоматический захват адреса из буфера обмена."""
+        """Основной вход: обычный браузер + автоматический захват адреса из буфера обмена."""
         if self._login_busy:
+            # повторное нажатие на «Отменить вход»
+            self._login_cancel.set()
+            self._clipboard_watch_until = 0.0
             return
         self._login_cancel.clear()
         self._set_login_busy(True)
         webbrowser.open(self._auth_url)
         self._clipboard_watch_until = time.monotonic() + 600
         self.update_status(
-            "Подтвердите доступ в браузере, затем скопируйте адрес страницы (Ctrl+L, Ctrl+C) — токен подхватится сам",
+            "В браузере нажмите «Продолжить», затем скопируйте адрес страницы: Ctrl+L, Ctrl+C. Токен подхватится сам",
             state="warning")
         self.after(700, self._watch_clipboard)
 
@@ -1355,7 +1358,7 @@ class MediaHarvesterApp(ctk.CTk):
                 self.after(0, lambda: self.update_status(
                     "ВКонтакте не принял токен. Войдите заново", state="error"))
                 return
-            text = f"Вход выполнен: {name}" if name else "Токен сохранён"
+            text = (f"Вход выполнен: {name}" if name else "Токен сохранён") + ". Вкладку VK можно закрыть"
             self.after(0, lambda: self.update_status(text, state="success"))
 
         threading.Thread(target=_verify, daemon=True).start()
