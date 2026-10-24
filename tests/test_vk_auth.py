@@ -4,8 +4,9 @@ import socketserver
 import threading
 import unittest
 
-from src.core.vk_auth import (BLANK_PREFIX, LoginOutcome, VkAuthResult, _is_success_url, _url_shape,
-                              find_auth_result, login_in_window, parse_auth_url)
+from src.core.vk_auth import (BLANK_PREFIX, LoginOutcome, VkAuthResult, _is_success_url, _message_shape,
+                              _url_shape, find_auth_result, find_token_in_message, login_in_window,
+                              parse_auth_url)
 
 try:
     import webview  # noqa: F401
@@ -51,6 +52,26 @@ class SuccessUrlTests(unittest.TestCase):
         self.assertIn("access_token", shape)
 
 
+class MessageTests(unittest.TestCase):
+    def test_token_found_in_nested_json_message(self):
+        msg = '{"type":"VKWebAppOAuthResult","payload":{"access_token":"vk1.a.ABCDEFGHIJKLMNOPQRSTUV","user_id":1}}'
+        self.assertEqual(find_token_in_message(msg), "vk1.a.ABCDEFGHIJKLMNOPQRSTUV")
+
+    def test_token_found_in_url_string_message(self):
+        msg = '"' + BLANK_PREFIX + '#access_token=vk1.a.ABCDEFGHIJKLMNOPQRSTUV&user_id=1"'
+        self.assertEqual(find_token_in_message(msg), "vk1.a.ABCDEFGHIJKLMNOPQRSTUV")
+
+    def test_unrelated_or_short_values_are_ignored(self):
+        self.assertIsNone(find_token_in_message('{"type":"ready","token":"short"}'))
+        self.assertIsNone(find_token_in_message("hello"))
+        self.assertIsNone(find_token_in_message("[1,2,3]"))
+
+    def test_shape_hides_values(self):
+        shape = _message_shape('{"access_token":"SECRETVALUE","n":5}')
+        self.assertNotIn("SECRETVALUE", shape)
+        self.assertIn("access_token", shape)
+
+
 class _Handler(http.server.BaseHTTPRequestHandler):
     def log_message(self, *a):
         pass
@@ -62,6 +83,14 @@ class _Handler(http.server.BaseHTTPRequestHandler):
         if self.path.startswith("/ok"):
             body = ("<script>setTimeout(()=>location.href='/blank.html#access_token=TESTTOKEN123456"
                     "&expires_in=0&user_id=42',500)</script>")
+        elif self.path.startswith("/msg"):
+            body = ("<script>setTimeout(()=>{window.chrome.webview.postMessage({payload:{access_token:"
+                    "'TESTMSGTOKEN1234567890XYZ'}});setTimeout(()=>location.href='/blank.html',400)},500)</script>")
+        elif self.path.startswith("/bridge"):
+            body = ("<script>setTimeout(()=>{ if(window.chrome&&window.chrome.webview){location.href='/blank.html'}"
+                    "else{location.href='/blank.html#access_token=NOBRIDGETOKEN1234567890&user_id=3'} },500)</script>")
+        elif self.path.startswith("/never"):
+            body = "<script>setTimeout(()=>location.href='/blank.html',500)</script>"
         elif self.path.startswith("/deny"):
             body = ("<script>setTimeout(()=>location.href='/blank.html#error=access_denied"
                     "&error_description=User+denied',500)</script>")
@@ -95,6 +124,17 @@ class LoginWindowTests(unittest.TestCase):
     def test_denied(self):
         out = self.login("/deny", timeout=90)
         self.assertEqual((out.status, out.detail), ("denied", "User denied"))
+
+    def test_token_delivered_as_page_message(self):
+        out = self.login("/msg", timeout=90)
+        self.assertEqual((out.status, out.result.token), ("ok", "TESTMSGTOKEN1234567890XYZ"))
+
+    def test_retry_without_webview_bridge_gets_redirect_token(self):
+        out = self.login("/bridge", timeout=90)
+        self.assertEqual((out.status, out.result.token), ("ok", "NOBRIDGETOKEN1234567890"))
+
+    def test_no_token_anywhere_falls_back_to_browser(self):
+        self.assertEqual(self.login("/never", timeout=90).status, "unavailable")
 
     def test_cancel_closes_window(self):
         ev = threading.Event()

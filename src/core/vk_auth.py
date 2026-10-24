@@ -121,12 +121,60 @@ def _debug(message: str) -> None:
         pass
 
 
+def find_token_in_message(payload) -> str | None:
+    """Ищет access_token в сообщении, которое страница отправила приложению-хозяину (JSON или строка)."""
+    if isinstance(payload, str):
+        text = payload.strip()
+        if text.startswith(("{", "[", '"')):
+            try:
+                return find_token_in_message(json.loads(text))
+            except ValueError:
+                pass
+        result = parse_auth_url(text) if "access_token=" in text else None
+        return result.token if result and result.token else None
+    if isinstance(payload, dict):
+        for key, value in payload.items():
+            if key in ("access_token", "token") and isinstance(value, str) and len(value) >= 20:
+                return value
+            found = find_token_in_message(value)
+            if found:
+                return found
+    elif isinstance(payload, list):
+        for value in payload:
+            found = find_token_in_message(value)
+            if found:
+                return found
+    return None
+
+
+def _message_shape(payload) -> str:
+    """Форма сообщения без значений: типы и имена полей."""
+    if isinstance(payload, str):
+        try:
+            return _message_shape(json.loads(payload)) if payload.strip()[:1] in "{[\"" else f"str({len(payload)})"
+        except ValueError:
+            return f"str({len(payload)})"
+    if isinstance(payload, dict):
+        return "{" + ",".join(f"{k}:{_message_shape(v)}" for k, v in list(payload.items())[:12]) + "}"
+    if isinstance(payload, list):
+        return f"list({len(payload)})"
+    return type(payload).__name__
+
+
+# Скрывает от страниц мост WebView2: VK ID по нему понимает, что открыт во встроенном окне,
+# и может вернуть результат сообщением вместо обычного редиректа с токеном
+HIDE_BRIDGE_JS = ("try{var c=window.chrome;if(c&&c.webview){"
+                  "Object.defineProperty(c,'webview',{get:function(){return undefined},configurable:true});}}catch(e){}")
+
+
 def run_login_window(auth_url: str, success_prefix: str = BLANK_PREFIX) -> int:
     """
     Показывает окно с авторизацией VK и печатает в stdout одну JSON-строку с результатом.
     Выполняется в отдельном процессе (см. login_in_window).
-    Адрес окна проверяется и по событию загрузки, и опросом каждые 0.25 с: редирект VK
-    может прийти раньше, чем успеет сработать событие.
+    Токен ищется по нескольким каналам: адрес окна (событие загрузки и опрос), заголовок Location
+    в редиректах, сообщения страницы приложению. Если страница-приёмник открылась без токена,
+    вход один раз перезапускается с отключённым мостом WebView2; если и это не помогло,
+    возвращается status=unavailable, и приложение переходит на вход через обычный браузер.
     """
     def emit(payload: dict) -> None:
         sys.stdout.write(json.dumps(payload, ensure_ascii=False) + "\n")
@@ -138,9 +186,19 @@ def run_login_window(auth_url: str, success_prefix: str = BLANK_PREFIX) -> int:
         emit({"status": "unavailable", "detail": f"pywebview не загружен: {e}"})
         return EXIT_UNAVAILABLE
 
-    state = {"emitted": False, "last": None, "probed": False, "responses": 0, "requests": 0}
+    state = {"emitted": False, "last": None, "probed": False, "responses": 0, "requests": 0,
+             "retried": False, "left_blank": False, "hooked": False, "messages": 0}
     lock = threading.Lock()
     _debug("окно входа запущено")
+
+    def finish(payload: dict, note: str) -> None:
+        with lock:
+            if state["emitted"]:
+                return
+            state["emitted"] = True
+        _debug(note)
+        emit(payload)
+        window.destroy()
 
     def check(url: str | None, source: str) -> None:
         if not url:
@@ -153,17 +211,12 @@ def run_login_window(auth_url: str, success_prefix: str = BLANK_PREFIX) -> int:
         result = parse_auth_url(url)
         if result is None:
             return
-        with lock:
-            if state["emitted"]:
-                return
-            state["emitted"] = True
-        _debug("результат получен: " + ("токен" if result.token else f"отказ ({result.error})"))
         if result.token:
-            emit({"status": "ok", "token": result.token, "user_id": result.user_id,
-                  "expires_in": result.expires_in})
+            finish({"status": "ok", "token": result.token, "user_id": result.user_id,
+                    "expires_in": result.expires_in}, "результат получен: токен")
         else:
-            emit({"status": "denied", "detail": result.error_description or result.error})
-        window.destroy()
+            finish({"status": "denied", "detail": result.error_description or result.error},
+                   f"результат получен: отказ ({result.error})")
 
     def with_timeout(fn, timeout: float = 2.0):
         """Вызов, который может повиснуть во время навигации (evaluate_js), не должен вешать слежение."""
@@ -191,6 +244,32 @@ def run_login_window(auth_url: str, success_prefix: str = BLANK_PREFIX) -> int:
             urls.append(href)
         return urls
 
+    def native_webview():
+        try:
+            return window.native.browser.webview
+        except Exception:
+            return None
+
+    def hide_bridge_and_retry() -> None:
+        """Страница-приёмник пришла без токена: повторяем вход, скрыв мост WebView2 от страниц."""
+        state["retried"] = True
+        state["probed"] = False
+        wv = native_webview()
+        try:
+            from System import Func, Object  # доступ к CoreWebView2 разрешён только из потока интерфейса
+
+            def install():
+                wv.CoreWebView2.AddScriptToExecuteOnDocumentCreatedAsync(HIDE_BRIDGE_JS)
+                return None
+
+            wv.Invoke(Func[Object](install))
+            _debug("страница без токена: повторяю вход со скрытым мостом WebView2")
+            window.load_url(auth_url)
+        except Exception as e:
+            _debug(f"не удалось скрыть мост WebView2: {e}")
+            finish({"status": "unavailable", "detail": "VK не вернул токен в окне входа"},
+                   "сдаёмся: мост скрыть не удалось")
+
     def probe_blank_page() -> None:
         """Страница-приёмник открыта, а токена в адресе нет: ищем его в записи навигации и referrer."""
         if state["probed"]:
@@ -208,25 +287,67 @@ def run_login_window(auth_url: str, success_prefix: str = BLANK_PREFIX) -> int:
                f"window.name={'есть' if info.get('name') else 'пусто'}")
         for candidate in (info.get("nav", ""), info.get("ref", ""), info.get("name", "")):
             check(candidate, "probe")
+        if state["emitted"]:
+            return
+        # Даём шанс запоздавшему сообщению страницы, затем перезапускаем вход или сдаёмся
+        time.sleep(1.5)
+        if state["emitted"]:
+            return
+        if not state["retried"]:
+            hide_bridge_and_retry()
+        else:
+            finish({"status": "unavailable", "detail": "VK не вернул токен в окне входа"},
+                   "сдаёмся: токена нет и после повторной попытки")
 
     window = webview.create_window("Вход ВКонтакте", auth_url, width=470, height=700)
 
+    def on_web_message(sender, args) -> None:
+        """Сообщение страницы приложению (VK ID может отдавать результат так)."""
+        try:
+            raw = str(args.WebMessageAsJson)
+            state["messages"] += 1
+            if state["messages"] <= 40:
+                _debug(f"сообщение страницы: {_message_shape(raw)}")
+            token = find_token_in_message(raw)
+            if token:
+                finish({"status": "ok", "token": token, "user_id": "", "expires_in": ""},
+                       "результат получен: токен из сообщения страницы")
+        except Exception as e:
+            _debug(f"on_web_message: {e}")
+
+    def hook_native() -> None:
+        wv = native_webview()
+        if wv is None or state["hooked"]:
+            return
+        try:
+            wv.WebMessageReceived += on_web_message
+            state["hooked"] = True
+            _debug("подписка на сообщения страницы установлена")
+        except Exception as e:
+            state["hooked"] = True
+            _debug(f"не удалось подписаться на сообщения страницы: {e}")
+
     def on_loaded() -> None:
+        hook_native()
         for url in current_urls():
             check(url, "loaded")
 
     def poll() -> None:
         empty_polls = 0
         while not state["emitted"]:
+            hook_native()
             urls = current_urls()
             empty_polls = empty_polls + 1 if not urls else 0
             if empty_polls > 40:  # окно закрыто
                 return
             for url in urls:
                 check(url, "poll")
-                if url.startswith(("https://oauth.vk.", "http://oauth.vk.")) and "/blank.html" in url:
-                    if parse_auth_url(url) is None:
-                        probe_blank_page()
+                is_blank = "/blank.html" in url and (url.startswith(success_prefix) or _is_vk_host(url))
+                if not is_blank:
+                    if state["retried"]:
+                        state["left_blank"] = True  # повторный вход действительно начался заново
+                elif parse_auth_url(url) is None and (not state["retried"] or state["left_blank"]):
+                    probe_blank_page()
             time.sleep(0.25)
 
     def on_shown() -> None:
