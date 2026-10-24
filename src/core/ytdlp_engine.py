@@ -4,6 +4,9 @@ from typing import Callable, Any
 import yt_dlp
 from src.utils.helpers import FFMPEG_PATH, DownloadCancelledError
 from src.core.router import gallery_platform_name
+from src.utils.logger import get_logger
+
+log = get_logger("ytdlp")
 
 
 def get_video_format_spec(choice: str) -> tuple[str, list[dict[str, Any]]]:
@@ -169,14 +172,6 @@ def download_video(
             )
             return f"{platform} Photo / Gallery"
 
-        if "Video unavailable" in raw_msg or "This video is unavailable" in raw_msg:
-            err_text = "Видео недоступно или удалено"
-        elif "Sign in to confirm your age" in raw_msg or "confirm you're not a bot" in raw_msg.lower():
-            err_text = "Требуется авторизация (18+ / бот-чек): укажите cookies.txt в настройках"
-        elif "Private" in raw_msg or "Sign in" in raw_msg or "login" in raw_msg.lower():
-            err_text = "Видео приватное или требует авторизации (укажите cookies.txt)"
-        elif "Requested format is not available" in raw_msg:
-            err_text = "Выбранное качество недоступно для этого видео"
-        else:
-            err_text = f"Ошибка: {clean_msg[:50]}"
-        raise RuntimeError(err_text) from e
+        # Человекочитаемое объяснение строится выше по стеку (utils.errors.explain_error)
+        log.warning("yt-dlp: ошибка загрузки %s: %s", url, raw_msg)
+        raise RuntimeError(clean_msg) from e

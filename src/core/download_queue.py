@@ -3,7 +3,11 @@ import threading
 from dataclasses import dataclass
 from typing import Callable
 
+from src.utils.errors import explain_error
 from src.utils.helpers import DownloadCancelledError
+from src.utils.logger import get_logger, redact
+
+log = get_logger("queue")
 
 # Статусы элемента очереди
 PENDING = "pending"
@@ -23,7 +27,9 @@ class QueueItem:
     url: str
     label: str = ""
     status: str = PENDING
-    message: str = ""
+    message: str = ""    # коротко, что пошло не так (для списка и статуса)
+    hint: str = ""       # что делать
+    technical: str = ""  # исходная ошибка для отчёта
     folder: str = ""
 
 
@@ -54,18 +60,24 @@ def run_queue(
         if cancel_event.is_set():
             break
         item.status = WORKING
-        item.message = ""
+        item.message = item.hint = item.technical = ""
+        log.info("[%s/%s] старт: %s", number, total, redact(item.url))
         on_change()
         try:
             item.folder = run_one(item, number, total)
             item.status = DONE
+            log.info("[%s/%s] готово: %s", number, total, item.folder)
         except DownloadCancelledError:
             item.status = CANCELLED
+            log.info("[%s/%s] отменено", number, total)
             on_change()
             break
         except Exception as e:
+            info = explain_error(e)
             item.status = ERROR
-            item.message = str(e)
+            item.message, item.hint, item.technical = info.message, info.hint, info.technical
+            log.error("[%s/%s] ошибка (%s): %s | %s", number, total, info.kind,
+                      info.message, info.technical, exc_info=True)
         on_change()
 
     return {

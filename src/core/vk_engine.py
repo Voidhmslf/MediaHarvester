@@ -13,6 +13,9 @@ import vk_api.exceptions
 
 from src.config import VK_MUSIC_USER_AGENT
 from src.utils.helpers import sanitize_filename, DownloadCancelledError
+from src.utils.logger import get_logger
+
+log = get_logger("vk")
 
 # Проверка наличия vkpymusic
 try:
@@ -265,6 +268,7 @@ def download_vk_photos(
                     pass
                 except Exception as e:
                     failed.append((num, url_i, str(e)[:120]))
+                    log.warning("VK фото #%s не скачано: %s", num, e)
                 done += 1
 
                 if cancel_event and cancel_event.is_set():
@@ -414,8 +418,9 @@ def download_vk_music(
                     downloaded += 1
                 else:
                     errors += 1
-            except Exception:
+            except Exception as e:
                 errors += 1
+                log.warning("VK трек %s не скачан: %s", getattr(song, "title", "?"), e)
 
             p = (i + 1) / total
             song_title = getattr(song, "title", "...") or "..."

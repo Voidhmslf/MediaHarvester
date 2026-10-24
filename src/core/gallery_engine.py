@@ -4,6 +4,9 @@ import sys
 import threading
 from typing import Callable
 from src.utils.helpers import DownloadCancelledError
+from src.utils.logger import get_logger
+
+log = get_logger("gallery")
 
 # Максимум файлов при скачивании ленты целиком (доска, профиль, сабреддит)
 LISTING_LIMIT = 500
@@ -42,6 +45,7 @@ def download_gallery(
     _notify(f"Подключение к {platform_name}...", "working")
 
     files_before = _count_files(target_dir)
+    log.info("gallery-dl: %s (%s), listing=%s", url, platform_name, listing)
 
     if getattr(sys, "frozen", False):
         cmd = [sys.executable, "--gallery-dl-worker"]
@@ -115,6 +119,9 @@ def download_gallery(
 
     downloaded_count = _count_files(target_dir) - files_before
     all_output = "\n".join(stdout_lines + stderr_lines)
+    log.info("gallery-dl завершён: код %s, новых файлов %s", returncode, downloaded_count)
+    if downloaded_count == 0 or returncode != 0:
+        log.warning("gallery-dl вывод:\n%s", "\n".join((stdout_lines + stderr_lines)[-30:]))
 
     # Запасной вариант: yt-dlp, если gallery-dl не нашёл файлов (например, пост — это видео)
     if downloaded_count == 0 and ytdlp_fallback and not listing:

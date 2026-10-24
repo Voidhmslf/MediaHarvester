@@ -32,6 +32,11 @@ from src.utils.helpers import (
     DownloadCancelledError,
 )
 from src.utils.ytdlp_updater import current_version as ytdlp_version, check_for_update
+from src.utils.errors import explain_error
+from src.utils.logger import setup_logging, get_logger, get_log_dir, register_secret, redact
+from src.utils.report import build_report, format_failures
+
+log = get_logger("app")
 from src.core.router import detect_url_type, gallery_platform_name
 from src.core.gallery_engine import download_gallery
 from src.core.download_queue import (
@@ -65,7 +70,9 @@ class MediaHarvesterApp(ctk.CTk):
     def __init__(self):
         super().__init__()
 
+        setup_logging()
         self.settings = SettingsManager()
+        register_secret(self.settings.vk_token)
         self.cancel_event = threading.Event()
 
         self.title("MediaHarvester")
@@ -108,6 +115,7 @@ class MediaHarvesterApp(ctk.CTk):
         self.last_saved_folder: str | None = None
         self.queue: list[QueueItem] = []
         self._engine_state: dict = {"ytdlp": "", "ffmpeg": None, "update": ""}
+        self.last_errors: list[QueueItem] = []
         self.current_screen: str = "downloader"
         self._auth_url: str = AUTH_URL_PHOTOS
 
@@ -152,6 +160,7 @@ class MediaHarvesterApp(ctk.CTk):
             self._engine_state["ytdlp"] = ytdlp_version()
         except Exception:
             self._engine_state["ytdlp"] = "?"
+        log.info("Окружение: yt-dlp %s, ffmpeg %s (%s)", self._engine_state["ytdlp"], ok, info)
         self.after(0, self._render_engine_info)
 
         if not ok:
@@ -164,6 +173,7 @@ class MediaHarvesterApp(ctk.CTk):
         self._engine_state["update"] = "checking"
         self.after(0, self._render_engine_info)
         result = check_for_update()
+        log.info("Проверка обновления yt-dlp: %s %s %s", result.status, result.latest, result.message)
         if result.status == "updated":
             self._engine_state["update"] = f"updated:{result.latest}"
         else:
@@ -878,6 +888,13 @@ class MediaHarvesterApp(ctk.CTk):
             "Для X и закрытого контента может понадобиться cookies.txt.")
 
         self._info_section(
+            "Если что-то не скачалось",
+            "В строке статуса — короткая причина, а кнопка «Подробнее» показывает, что делать, "
+            "и техническую причину по каждой ссылке. «Скопировать отчёт» собирает всё для разработчика: "
+            "версии, ошибки и последние строки лога (токены и ключи в ссылках скрываются).\n"
+            "Лог хранится в %LOCALAPPDATA%\\MediaHarvester\\logs — откройте его кнопкой в окне «Подробнее».")
+
+        self._info_section(
             "Очередь ссылок",
             "Вставьте сразу несколько ссылок (по одной в строке) или нажимайте Enter / "
             "«Добавить в очередь» после каждой. «Начать скачивание» скачает всё по порядку; "
@@ -1016,6 +1033,14 @@ class MediaHarvesterApp(ctk.CTk):
             command=self.open_downloaded_folder)
         self._folder_btn_visible = False
 
+        self.btn_details = ctk.CTkButton(
+            right_sb, text="Подробнее", height=24, width=84,
+            corner_radius=4, font=self.font_small,
+            fg_color=SURFACE_CARD_BORDER, hover_color=STATUS_RED,
+            text_color=TEXT_SECONDARY,
+            command=self.show_error_details)
+        self._details_btn_visible = False
+
         self.progressbar = ctk.CTkProgressBar(
             sb, height=3, corner_radius=2,
             fg_color=SURFACE_INNER,
@@ -1057,6 +1082,74 @@ class MediaHarvesterApp(ctk.CTk):
         if not self._folder_btn_visible:
             self.btn_view_downloaded.pack(side="right", padx=(0, 6))
             self._folder_btn_visible = True
+
+    def _show_details_button(self):
+        if not self._details_btn_visible:
+            self.btn_details.pack(side="right", padx=(0, 6))
+            self._details_btn_visible = True
+
+    def _hide_details_button(self):
+        if self._details_btn_visible:
+            self.btn_details.pack_forget()
+            self._details_btn_visible = False
+
+    # ──────────────────────────────────────────────────────
+    # ОКНО «ПОДРОБНЕЕ» ОБ ОШИБКАХ
+    # ──────────────────────────────────────────────────────
+    def show_error_details(self):
+        items = self.last_errors
+        if not items:
+            return
+        win = ctk.CTkToplevel(self)
+        win.title("Что пошло не так")
+        win.geometry("560x480")
+        win.minsize(420, 320)
+        win.configure(fg_color=BG_MAIN)
+        win.transient(self)
+        try:
+            if os.path.exists(self.icon_path):
+                win.after(250, lambda: win.iconbitmap(self.icon_path))
+        except Exception:
+            pass
+
+        ctk.CTkLabel(
+            win, text=f"Не удалось скачать: {len(items)}", font=self.font_title,
+            text_color=TEXT_MAIN).pack(anchor="w", padx=16, pady=(14, 6))
+
+        box = ctk.CTkTextbox(
+            win, font=self.font_mono, fg_color=SURFACE_INNER, text_color=TEXT_SECONDARY,
+            border_width=1, border_color=SURFACE_INNER_BORDER, wrap="word")
+        box.pack(fill="both", expand=True, padx=16, pady=(0, 8))
+        box.insert("1.0", format_failures(items))
+        box.configure(state="disabled")
+
+        btns = ctk.CTkFrame(win, fg_color="transparent")
+        btns.pack(fill="x", padx=16, pady=(0, 14))
+
+        def copy_report():
+            self.clipboard_clear()
+            self.clipboard_append(build_report(items, self._engine_state))
+            btn_copy.configure(text="Скопировано")
+
+        btn_copy = ctk.CTkButton(
+            btns, text="Скопировать отчёт", height=32, corner_radius=6, font=self.font_small,
+            fg_color=ACCENT_BLUE, hover_color=ACCENT_BLUE_HOVER, text_color=TEXT_MAIN,
+            command=copy_report)
+        btn_copy.pack(side="left")
+        ctk.CTkButton(
+            btns, text="Открыть папку логов", height=32, corner_radius=6, font=self.font_small,
+            fg_color=SURFACE_CARD_BORDER, hover_color=SURFACE_INNER_BORDER,
+            text_color=TEXT_SECONDARY, command=lambda: open_folder(get_log_dir())
+        ).pack(side="left", padx=(8, 0))
+        ctk.CTkButton(
+            btns, text="Закрыть", width=84, height=32, corner_radius=6, font=self.font_small,
+            fg_color=SURFACE_CARD_BORDER, hover_color=SURFACE_INNER_BORDER,
+            text_color=TEXT_SECONDARY, command=win.destroy
+        ).pack(side="right")
+
+    def report_callback_exception(self, exc, val, tb):
+        """Ошибки в обработчиках Tk: пишем в лог вместо молчаливого вывода в консоль."""
+        log.critical("Ошибка в обработчике интерфейса", exc_info=(exc, val, tb))
 
     def _hide_folder_button(self):
         if self._folder_btn_visible:
@@ -1142,6 +1235,7 @@ class MediaHarvesterApp(ctk.CTk):
         extracted = extract_token(raw)
         if extracted != self.settings.vk_token:
             self.settings.vk_token = extracted
+            register_secret(extracted)
         self._update_token_badge()
 
     # ──────────────────────────────────────────────────────
@@ -1183,6 +1277,7 @@ class MediaHarvesterApp(ctk.CTk):
         if entry_widget is self.entry_token:
             text = extract_token(text)
             self.settings.vk_token = text
+            register_secret(text)
 
         if entry_widget is self.entry_url and len(parse_urls(text)) > 1:
             if self.is_downloading:
@@ -1252,6 +1347,7 @@ class MediaHarvesterApp(ctk.CTk):
 
         if busy:
             self._hide_folder_button()
+            self._hide_details_button()
         self._refresh_queue_view()
 
     def _set_busy(self, busy: bool):
@@ -1331,6 +1427,10 @@ class MediaHarvesterApp(ctk.CTk):
             self.last_saved_folder = saved[-1]
             self.after(0, self._show_folder_button)
 
+        self.last_errors = [it for it in items if it.status == ERROR]
+        if self.last_errors:
+            self.after(0, self._show_details_button)
+
         if summary["cancelled"] or self.cancel_event.is_set():
             self.update_status(
                 "Загрузка отменена пользователем" if total == 1
@@ -1338,10 +1438,7 @@ class MediaHarvesterApp(ctk.CTk):
                 state="warning")
         elif total == 1:
             if failed:
-                msg = items[0].message
-                if not msg.startswith(("Ошибка", "Требуется", "Instagram")):
-                    msg = f"Ошибка: {msg}"
-                self.update_status(msg[:80], state="error")
+                self.update_status(items[0].message[:90], state="error")
             # при успехе движок уже показал «Готово…»
         elif failed:
             self.update_status(
