@@ -31,6 +31,17 @@ from src.utils.helpers import (
     DownloadCancelledError,
 )
 from src.core.router import detect_url_type
+from src.core.download_queue import (
+    QueueItem,
+    parse_urls,
+    run_queue,
+    RUNNABLE,
+    PENDING,
+    WORKING,
+    DONE,
+    ERROR,
+    CANCELLED,
+)
 from src.core.ytdlp_engine import (
     probe_video_quality,
     download_video,
@@ -92,6 +103,7 @@ class MediaHarvesterApp(ctk.CTk):
         self.is_downloading: bool = False
         self.is_probing: bool = False
         self.last_saved_folder: str | None = None
+        self.queue: list[QueueItem] = []
         self.current_screen: str = "downloader"
         self._auth_url: str = AUTH_URL_PHOTOS
 
@@ -212,6 +224,7 @@ class MediaHarvesterApp(ctk.CTk):
             scrollbar_button_hover_color=TEXT_MUTED)
         self._build_mode_card()
         self._build_url_card()
+        self._build_queue_card()
         self._build_quality_card()
         self._build_token_card()
         self._build_cookies_card()
@@ -282,6 +295,7 @@ class MediaHarvesterApp(ctk.CTk):
             text_color=TEXT_MAIN, placeholder_text_color=TEXT_MUTED)
         self.entry_url.pack(side="left", fill="x", expand=True, padx=(0, 6))
         self.entry_url.bind("<KeyRelease>", self._on_url_changed)
+        self.entry_url.bind("<Return>", lambda e: self.add_entry_to_queue())
 
         ctk.CTkButton(
             erow, text="Вставить", width=74, height=34, corner_radius=6,
@@ -301,11 +315,142 @@ class MediaHarvesterApp(ctk.CTk):
             command=self._clear_url
         ).pack(side="right")
 
+        self.btn_add_queue = ctk.CTkButton(
+            self.card_url, text="+ Добавить в очередь (Enter)", height=30,
+            corner_radius=6, font=self.font_small,
+            fg_color=SURFACE_CARD_BORDER,
+            hover_color=SURFACE_INNER_BORDER,
+            text_color=TEXT_SECONDARY,
+            command=self.add_entry_to_queue)
+        self.btn_add_queue.pack(fill="x", padx=14, pady=(0, 6))
+
         self.lbl_url_hint = ctk.CTkLabel(
             self.card_url,
-            text="Поддерживаются видео YouTube, посты и Reels Instagram, фото и музыка VK",
+            text=("Поддерживаются видео YouTube, посты и Reels Instagram, фото и музыка VK. "
+                  "Можно вставить сразу несколько ссылок — они попадут в очередь"),
             font=self.font_subtitle, text_color=TEXT_MUTED, justify="left")
         self.lbl_url_hint.pack(anchor="w", padx=14, pady=(0, 10))
+
+    # ──────────────────────────────────────────────────────
+    # ОЧЕРЕДЬ ССЫЛОК
+    # ──────────────────────────────────────────────────────
+    _QUEUE_ICONS = {
+        PENDING:   ("•",   TEXT_MUTED),
+        WORKING:   ("...", TEXT_SECONDARY),
+        DONE:      ("OK",  STATUS_GREEN),
+        ERROR:     ("!",   STATUS_RED),
+        CANCELLED: ("~",   STATUS_AMBER),
+    }
+
+    def _build_queue_card(self):
+        # Карточка показывается только когда в очереди есть элементы (см. _refresh_queue_view)
+        self.card_queue = ctk.CTkFrame(
+            self.main_scroll, fg_color=SURFACE_CARD, corner_radius=6,
+            border_width=1, border_color=SURFACE_CARD_BORDER)
+
+        hrow = ctk.CTkFrame(self.card_queue, fg_color="transparent")
+        hrow.pack(fill="x", padx=14, pady=(10, 6))
+        self.lbl_queue_title = ctk.CTkLabel(
+            hrow, text="Очередь", font=self.font_section, text_color=TEXT_SECONDARY)
+        self.lbl_queue_title.pack(side="left")
+
+        self.btn_queue_clear = ctk.CTkButton(
+            hrow, text="Очистить", width=70, height=24, corner_radius=4,
+            font=self.font_small, fg_color=SURFACE_CARD_BORDER,
+            hover_color=SURFACE_INNER_BORDER, text_color=TEXT_MUTED,
+            command=self.clear_queue)
+        self.btn_queue_clear.pack(side="right")
+        self.btn_queue_clean_done = ctk.CTkButton(
+            hrow, text="Убрать готовые", width=104, height=24, corner_radius=4,
+            font=self.font_small, fg_color=SURFACE_CARD_BORDER,
+            hover_color=SURFACE_INNER_BORDER, text_color=TEXT_MUTED,
+            command=self.remove_done_from_queue)
+        self.btn_queue_clean_done.pack(side="right", padx=(0, 6))
+
+        self.queue_rows = ctk.CTkFrame(self.card_queue, fg_color="transparent")
+        self.queue_rows.pack(fill="x", padx=14, pady=(0, 10))
+
+    def _enqueue_text(self, text: str) -> int:
+        """Добавляет ссылки из текста в очередь (без дублей). Возвращает число добавленных."""
+        urls = parse_urls(text) or ([text.strip()] if text.strip() else [])
+        known = {it.url for it in self.queue}
+        added = 0
+        for url in urls:
+            if url in known:
+                continue
+            known.add(url)
+            self.queue.append(QueueItem(url=url, label=detect_url_type(url)["label"]))
+            added += 1
+        self._refresh_queue_view()
+        return added
+
+    def add_entry_to_queue(self):
+        text = self.entry_url.get().strip()
+        if not text or self.is_downloading:
+            return
+        added = self._enqueue_text(text)
+        self._clear_url()
+        self.update_status(
+            f"В очередь добавлено: {added}" if added else "Эта ссылка уже в очереди",
+            state="idle")
+
+    def clear_queue(self):
+        if self.is_downloading:
+            return
+        self.queue.clear()
+        self._refresh_queue_view()
+
+    def remove_done_from_queue(self):
+        if self.is_downloading:
+            return
+        self.queue = [it for it in self.queue if it.status != DONE]
+        self._refresh_queue_view()
+
+    def remove_queue_item(self, item: QueueItem):
+        if self.is_downloading or item not in self.queue:
+            return
+        self.queue.remove(item)
+        self._refresh_queue_view()
+
+    def _refresh_queue_view(self):
+        if not self.queue:
+            self.card_queue.pack_forget()
+            return
+
+        if not self.card_queue.winfo_ismapped():
+            self.card_queue.pack(fill="x", padx=2, pady=(0, 10), after=self.card_url)
+
+        done = sum(1 for it in self.queue if it.status == DONE)
+        self.lbl_queue_title.configure(text=f"Очередь: {done} из {len(self.queue)}")
+
+        for child in self.queue_rows.winfo_children():
+            child.destroy()
+
+        for item in self.queue:
+            icon, color = self._QUEUE_ICONS.get(item.status, ("•", TEXT_MUTED))
+            row = ctk.CTkFrame(self.queue_rows, fg_color=SURFACE_INNER, corner_radius=4)
+            row.pack(fill="x", pady=2)
+
+            ctk.CTkLabel(row, text=icon, width=26, font=self.font_small,
+                         text_color=color).pack(side="left", padx=(6, 0))
+
+            short = item.url if len(item.url) <= 46 else item.url[:43] + "..."
+            text_col = ctk.CTkFrame(row, fg_color="transparent")
+            text_col.pack(side="left", fill="x", expand=True, padx=4, pady=3)
+            ctk.CTkLabel(text_col, text=short, font=self.font_small,
+                         text_color=TEXT_MAIN, anchor="w").pack(fill="x")
+            sub = item.message[:60] if item.status == ERROR and item.message else item.label
+            ctk.CTkLabel(text_col, text=sub, font=ctk.CTkFont(family="Segoe UI", size=10),
+                         text_color=STATUS_RED if item.status == ERROR else TEXT_MUTED,
+                         anchor="w").pack(fill="x")
+
+            ctk.CTkButton(
+                row, text="✕", width=26, height=24, corner_radius=4,
+                font=self.font_small, fg_color="transparent",
+                hover_color=SURFACE_CARD_BORDER, text_color=TEXT_MUTED,
+                state="disabled" if self.is_downloading else "normal",
+                command=lambda it=item: self.remove_queue_item(it)
+            ).pack(side="right", padx=4)
 
     def _build_quality_card(self):
         self.card_quality = self._card(self.main_scroll)
@@ -656,6 +801,13 @@ class MediaHarvesterApp(ctk.CTk):
             "вручную переключать режим.")
 
         self._info_section(
+            "Очередь ссылок",
+            "Вставьте сразу несколько ссылок (по одной в строке) или нажимайте Enter / "
+            "«Добавить в очередь» после каждой. «Начать скачивание» скачает всё по порядку; "
+            "ошибка на одной ссылке не останавливает остальные. Неудавшиеся ссылки остаются "
+            "в списке — повторный запуск скачает только их. «Остановить» прерывает всю очередь.")
+
+        self._info_section(
             "2. Безопасная отмена загрузки",
             "Во время любого скачивания кнопка меняется на «Остановить скачивание». "
             "При нажатии процесс завершается корректно и безопасно, сохраняя уже загруженные файлы "
@@ -950,6 +1102,13 @@ class MediaHarvesterApp(ctk.CTk):
             text = extract_token(text)
             self.settings.vk_token = text
 
+        if entry_widget is self.entry_url and len(parse_urls(text)) > 1:
+            if self.is_downloading:
+                return
+            added = self._enqueue_text(text)
+            self.update_status(f"В очередь добавлено ссылок: {added}", state="idle")
+            return
+
         try:
             entry_widget.configure(state="normal")
         except Exception:
@@ -1011,6 +1170,7 @@ class MediaHarvesterApp(ctk.CTk):
 
         if busy:
             self._hide_folder_button()
+        self._refresh_queue_view()
 
     def _set_busy(self, busy: bool):
         self.after(0, self._set_ui_busy_main, busy)
@@ -1026,27 +1186,95 @@ class MediaHarvesterApp(ctk.CTk):
             self.update_status("Остановка скачивания...", state="warning")
             return
 
-        self.cancel_event.clear()
-        self._set_ui_busy_main(True)
-        threading.Thread(target=self._download_process, daemon=True).start()
+        entry_text = self.entry_url.get().strip()
+        runnable_in_queue = [it for it in self.queue if it.status in RUNNABLE]
 
-    def _download_process(self):
-        mode = self.combo_mode.get()
-        target_url = self.entry_url.get().strip()
-        token_raw = self.entry_token.get().strip()
-        cookies_path = self.settings.cookies_path
-
-        if not target_url:
+        if runnable_in_queue:
+            # Ссылка из поля ввода тоже уходит в очередь
+            if entry_text:
+                self._enqueue_text(entry_text)
+                self._clear_url()
+            items = [it for it in self.queue if it.status in RUNNABLE]
+            use_queue = True
+        elif entry_text:
+            # Одиночная загрузка без очереди (как раньше)
+            items = [QueueItem(url=entry_text, label=detect_url_type(entry_text)["label"])]
+            use_queue = False
+        else:
             self.update_status("Ошибка: вставьте ссылку на источник", state="error")
-            self._set_busy(False)
             return
 
-        self.update_status("Определение источника...", state="working", progress=0, percent_str="0%")
+        # Снимок настроек из интерфейса (рабочий поток не трогает виджеты)
+        opts = {
+            "mode": self.combo_mode.get(),
+            "token_raw": self.entry_token.get().strip(),
+            "cookies_path": self.settings.cookies_path,
+            "quality": self.combo_quality.get(),
+            "allow_playlist": bool(self.chk_playlist.get()),
+            "download_path": self.download_path,
+        }
 
-        # Определение целевого движка загрузки
+        self.cancel_event.clear()
+        self._set_ui_busy_main(True)
+        threading.Thread(
+            target=self._download_process, args=(items, opts, use_queue), daemon=True
+        ).start()
+
+    def _download_process(self, items: list[QueueItem], opts: dict, use_queue: bool):
+        def on_change():
+            if use_queue:
+                self.after(0, self._refresh_queue_view)
+
+        def run_one(item: QueueItem, number: int, total: int) -> str:
+            prefix = f"[{number}/{total}] " if total > 1 else ""
+
+            def cb(text, state="idle", progress=None, percent_str=""):
+                # Промежуточный успех элемента не должен выглядеть как конец всей очереди
+                if prefix and state == "success":
+                    state = "working"
+                self.update_status(prefix + text, state, progress, percent_str)
+
+            self.update_status(prefix + "Определение источника...", state="working",
+                               progress=0, percent_str="0%")
+            return self._download_one(item.url, opts, cb)
+
+        try:
+            summary = run_queue(items, run_one, self.cancel_event, on_change)
+        finally:
+            self._set_busy(False)
+
+        done, failed, total = summary["done"], summary["failed"], summary["total"]
+        saved = [it.folder for it in items if it.status == DONE and it.folder]
+        if saved:
+            self.last_saved_folder = saved[-1]
+            self.after(0, self._show_folder_button)
+
+        if summary["cancelled"] or self.cancel_event.is_set():
+            self.update_status(
+                "Загрузка отменена пользователем" if total == 1
+                else f"Очередь остановлена: готово {done} из {total}",
+                state="warning")
+        elif total == 1:
+            if failed:
+                msg = items[0].message
+                if not msg.startswith(("Ошибка", "Требуется", "Instagram")):
+                    msg = f"Ошибка: {msg}"
+                self.update_status(msg[:80], state="error")
+            # при успехе движок уже показал «Готово…»
+        elif failed:
+            self.update_status(
+                f"Очередь завершена: готово {done} из {total}, ошибок {failed}",
+                state="warning", progress=1.0, percent_str="100%")
+        else:
+            self.update_status(
+                f"Очередь завершена: готово {done} из {total}",
+                state="success", progress=1.0, percent_str="100%")
+
+    def _download_one(self, target_url: str, opts: dict, cb) -> str:
+        """Скачивает одну ссылку нужным движком. Возвращает путь к папке; ошибки — исключением."""
+        mode = opts["mode"]
         if "Автоопределение" in mode:
-            detected = detect_url_type(target_url)
-            engine = detected["engine"]
+            engine = detect_url_type(target_url)["engine"]
         elif "Видео" in mode:
             engine = "ytdlp"
         elif "Instagram" in mode:
@@ -1058,64 +1286,41 @@ class MediaHarvesterApp(ctk.CTk):
         else:
             engine = "ytdlp"
 
-        allow_playlist = bool(self.chk_playlist.get()) if hasattr(self, "chk_playlist") else False
+        download_path = opts["download_path"]
 
-        try:
-            if engine == "insta":
-                saved_folder = download_instagram(
-                    url=target_url,
-                    download_path=self.download_path,
-                    cookies_path=cookies_path,
-                    status_callback=self.update_status,
-                    cancel_event=self.cancel_event
-                )
-                self.last_saved_folder = saved_folder
-                self.after(0, self._show_folder_button)
+        if engine == "insta":
+            return download_instagram(
+                url=target_url,
+                download_path=download_path,
+                cookies_path=opts["cookies_path"],
+                status_callback=cb,
+                cancel_event=self.cancel_event
+            )
+        if engine == "vk_photos":
+            return download_vk_photos(
+                token_raw=opts["token_raw"],
+                url=target_url,
+                download_path=download_path,
+                progress_callback=cb,
+                cancel_event=self.cancel_event
+            )
+        if engine == "vk_music":
+            return download_vk_music(
+                token_raw=opts["token_raw"],
+                url=target_url,
+                download_path=download_path,
+                progress_callback=cb,
+                cancel_event=self.cancel_event
+            )
 
-            elif engine == "vk_photos":
-                saved_folder = download_vk_photos(
-                    token_raw=token_raw,
-                    url=target_url,
-                    download_path=self.download_path,
-                    progress_callback=self.update_status,
-                    cancel_event=self.cancel_event
-                )
-                self.last_saved_folder = saved_folder
-                self.after(0, self._show_folder_button)
-
-            elif engine == "vk_music":
-                saved_folder = download_vk_music(
-                    token_raw=token_raw,
-                    url=target_url,
-                    download_path=self.download_path,
-                    progress_callback=self.update_status,
-                    cancel_event=self.cancel_event
-                )
-                self.last_saved_folder = saved_folder
-                self.after(0, self._show_folder_button)
-
-            else:  # ytdlp
-                quality_choice = self.combo_quality.get()
-                title = download_video(
-                    url=target_url,
-                    download_path=self.download_path,
-                    quality_choice=quality_choice,
-                    progress_callback=self.update_status,
-                    cookies_path=cookies_path,
-                    cancel_event=self.cancel_event,
-                    allow_playlist=allow_playlist
-                )
-                self.last_saved_folder = self.download_path
-                self.update_status(f"Готово: {title[:40]}", state="success",
-                                   progress=1.0, percent_str="100%")
-                self.after(0, self._show_folder_button)
-
-        except DownloadCancelledError:
-            self.update_status("Загрузка отменена пользователем", state="warning")
-        except Exception as e:
-            msg = str(e)
-            if not msg.startswith("Ошибка") and not msg.startswith("Требуется") and not msg.startswith("Instagram"):
-                msg = f"Ошибка: {msg}"
-            self.update_status(msg[:80], state="error")
-        finally:
-            self._set_busy(False)
+        title = download_video(
+            url=target_url,
+            download_path=download_path,
+            quality_choice=opts["quality"],
+            progress_callback=cb,
+            cookies_path=opts["cookies_path"],
+            cancel_event=self.cancel_event,
+            allow_playlist=opts["allow_playlist"]
+        )
+        cb(f"Готово: {title[:40]}", "success", 1.0, "100%")
+        return download_path
