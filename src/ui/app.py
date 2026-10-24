@@ -25,6 +25,7 @@ from src.config import (
     AUTH_URL_MUSIC,
     CONTENT_MODES,
     QUALITY_PRESETS,
+    VK_MUSIC_USER_AGENT,
     SettingsManager,
 )
 from src.utils.helpers import (
@@ -670,7 +671,14 @@ class MediaHarvesterApp(ctk.CTk):
             height=24, corner_radius=4, font=self.font_small,
             fg_color="transparent", hover_color=SURFACE_CARD_BORDER,
             text_color=TEXT_MUTED, command=self.start_vk_login)
-        self.btn_auth_window.pack(fill="x", padx=14, pady=(0, 8))
+        self.btn_auth_window.pack(fill="x", padx=14, pady=(0, 4))
+
+        self.btn_token_check = ctk.CTkButton(
+            self.card_token, text="Проверить токен",
+            height=24, corner_radius=4, font=self.font_small,
+            fg_color="transparent", hover_color=SURFACE_CARD_BORDER,
+            text_color=TEXT_MUTED, command=self.check_vk_token)
+        self.btn_token_check.pack(fill="x", padx=14, pady=(0, 8))
 
         erow = ctk.CTkFrame(self.card_token, fg_color="transparent")
         erow.pack(fill="x", padx=14, pady=(0, 6))
@@ -1341,6 +1349,35 @@ class MediaHarvesterApp(ctk.CTk):
     # ──────────────────────────────────────────────────────
     _TOKEN_HINT = ("Нажмите «Войти»: в браузере подтвердите доступ и скопируйте адрес страницы "
                    "(Ctrl+L, Ctrl+C) — токен подхватится сам. Пароль программе не передаётся")
+
+    def check_vk_token(self):
+        """Проверяет текущий токен: какие методы VK отвечают (подробности — в логе, без самого токена)."""
+        token = self.settings.get_vk_token(self._token_kind)
+        if not token:
+            self.update_status("Сначала войдите через ВКонтакте", state="warning")
+            return
+        kind = self._token_kind
+        self.btn_token_check.configure(state="disabled", text="Проверяю...")
+        self.update_status("Проверяю токен: перебираю параметры запроса (около 20 секунд)...", state="working")
+
+        def _worker():
+            try:
+                from src.core.vk_diag import run_diagnostics
+                agents = {"kate": VK_MUSIC_USER_AGENT,
+                          "android": "VKAndroidApp/8.52-17600 (Android 14; SDK 34; arm64-v8a; Samsung Galaxy S24; ru; 2960x1440)",
+                          "none": ""}
+                summary, _ = run_diagnostics(token, kind, agents)
+                state = "success" if summary.startswith("Токен рабочий") else "warning"
+            except Exception as e:
+                log.exception("Диагностика токена")
+                summary, state = f"Не удалось проверить токен: {e}"[:90], "error"
+
+            def _done():
+                self.btn_token_check.configure(state="normal", text="Проверить токен")
+                self.update_status(summary[:140], state=state)
+            self.after(0, _done)
+
+        threading.Thread(target=_worker, daemon=True).start()
 
     def _set_login_busy(self, busy: bool):
         self._login_busy = busy
