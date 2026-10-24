@@ -1,6 +1,9 @@
 import json
 import os
+import sys
 from typing import Any
+
+from src.utils.helpers import get_app_data_dir
 
 # ─────────────────────────────────────────
 # ЦВЕТОВАЯ ПАЛИТРА (Fluent / Windows 11 Dark)
@@ -71,9 +74,13 @@ class SettingsManager:
 
     def __init__(self, filepath: str | None = None):
         if filepath is None:
-            # Определяем корень проекта относительно src/config.py
-            root_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-            filepath = os.path.join(root_dir, "settings.json")
+            if getattr(sys, "frozen", False):
+                # В .exe папка с кодом временная — храним настройки в профиле пользователя
+                filepath = os.path.join(get_app_data_dir(), "settings.json")
+            else:
+                # Определяем корень проекта относительно src/config.py
+                root_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+                filepath = os.path.join(root_dir, "settings.json")
         self.filepath = filepath
 
         default_downloads = os.path.join(os.path.expanduser("~"), "Downloads")
@@ -83,6 +90,7 @@ class SettingsManager:
             "download_path": initial_path,
             "vk_token": "",
             "cookies_path": "",
+            "auto_update_ytdlp": True,
         }
         self._data: dict[str, Any] = dict(self._defaults)
         self.load()

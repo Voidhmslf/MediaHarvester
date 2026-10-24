@@ -19,6 +19,49 @@ except Exception:
     FFMPEG_PATH = shutil.which("ffmpeg")
 
 
+def get_app_data_dir() -> str:
+    """
+    Постоянная папка для настроек и обновлений. В одно-файловой сборке PyInstaller папка рядом
+    с кодом — временная (_MEIPASS) и стирается при выходе, поэтому данные хранятся в профиле пользователя.
+    """
+    if sys.platform == "win32":
+        base = os.environ.get("LOCALAPPDATA") or os.path.expanduser("~")
+    elif sys.platform == "darwin":
+        base = os.path.expanduser("~/Library/Application Support")
+    else:
+        base = os.environ.get("XDG_DATA_HOME") or os.path.expanduser("~/.local/share")
+    path = os.path.join(base, "MediaHarvester")
+    os.makedirs(path, exist_ok=True)
+    return path
+
+
+def check_ffmpeg(timeout: float = 8.0) -> tuple[bool, str]:
+    """
+    Проверяет, что FFmpeg найден и запускается. Возвращает (работает, версия или причина проблемы).
+    Без FFmpeg не склеиваются видео и аудио дорожки (1080p и выше) и не работает конвертация в MP3.
+    """
+    if not FFMPEG_PATH:
+        return False, "не найден"
+    if not os.path.isfile(FFMPEG_PATH):
+        return False, "файл не найден"
+    try:
+        kwargs = {}
+        if sys.platform == "win32":
+            kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
+        out = subprocess.run(
+            [FFMPEG_PATH, "-version"], capture_output=True, text=True,
+            timeout=timeout, **kwargs
+        )
+    except Exception as e:
+        return False, f"не запускается ({type(e).__name__})"
+    if out.returncode != 0:
+        return False, "не запускается"
+    first = (out.stdout or "").splitlines()[0] if out.stdout else ""
+    parts = first.split()
+    version = parts[2] if len(parts) >= 3 and parts[0].lower() == "ffmpeg" else "OK"
+    return True, version
+
+
 def get_resource_path(relative_path: str) -> str:
     """
     Возвращает абсолютный путь к ресурсу.

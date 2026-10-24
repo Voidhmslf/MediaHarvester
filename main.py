@@ -7,6 +7,13 @@ if __name__ == "__main__":
         sys.argv = ["gallery-dl"] + sys.argv[2:]
         sys.exit(gallery_dl.main())
 
+    # Подключаем скачанную свежую версию yt-dlp (если есть) до импорта остального кода
+    try:
+        from src.utils.ytdlp_updater import activate_override
+        activate_override()
+    except Exception:
+        pass
+
     from src.ui.app import MediaHarvesterApp
     app = MediaHarvesterApp()
     app.mainloop()

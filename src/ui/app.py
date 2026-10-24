@@ -28,8 +28,10 @@ from src.config import (
 from src.utils.helpers import (
     get_resource_path,
     open_folder,
+    check_ffmpeg,
     DownloadCancelledError,
 )
+from src.utils.ytdlp_updater import current_version as ytdlp_version, check_for_update
 from src.core.router import detect_url_type, gallery_platform_name
 from src.core.gallery_engine import download_gallery
 from src.core.download_queue import (
@@ -105,6 +107,7 @@ class MediaHarvesterApp(ctk.CTk):
         self.is_probing: bool = False
         self.last_saved_folder: str | None = None
         self.queue: list[QueueItem] = []
+        self._engine_state: dict = {"ytdlp": "", "ffmpeg": None, "update": ""}
         self.current_screen: str = "downloader"
         self._auth_url: str = AUTH_URL_PHOTOS
 
@@ -134,6 +137,58 @@ class MediaHarvesterApp(ctk.CTk):
         self.combo_mode.set(CONTENT_MODES[0])  # "Автоопределение (Smart)" по умолчанию
         self.on_mode_change(CONTENT_MODES[0])
         self._update_token_badge()
+
+        # Проверки окружения (ffmpeg, обновление yt-dlp) — в фоне, чтобы не задерживать запуск
+        self.after(800, lambda: threading.Thread(
+            target=self._background_checks, daemon=True).start())
+
+    # ──────────────────────────────────────────────────────
+    # ПРОВЕРКИ ПРИ СТАРТЕ: FFMPEG И YT-DLP
+    # ──────────────────────────────────────────────────────
+    def _background_checks(self):
+        ok, info = check_ffmpeg()
+        self._engine_state["ffmpeg"] = (ok, info)
+        try:
+            self._engine_state["ytdlp"] = ytdlp_version()
+        except Exception:
+            self._engine_state["ytdlp"] = "?"
+        self.after(0, self._render_engine_info)
+
+        if not ok:
+            self.update_status(
+                "FFmpeg не найден: видео выше 720p и конвертация в MP3 могут не работать",
+                state="warning")
+
+        if not self.settings.get("auto_update_ytdlp", True):
+            return
+        self._engine_state["update"] = "checking"
+        self.after(0, self._render_engine_info)
+        result = check_for_update()
+        if result.status == "updated":
+            self._engine_state["update"] = f"updated:{result.latest}"
+        else:
+            self._engine_state["update"] = ""
+        self.after(0, self._render_engine_info)
+
+    def _render_engine_info(self):
+        st = self._engine_state
+        parts, color = [], TEXT_MUTED
+        if st["ytdlp"]:
+            parts.append(f"yt-dlp {st['ytdlp']}")
+        if st["update"] == "checking":
+            parts.append("проверка обновлений...")
+        elif st["update"].startswith("updated:"):
+            parts.append(f"обновлён до {st['update'].split(':', 1)[1]} — перезапустите программу")
+            color = STATUS_AMBER
+        if st["ffmpeg"] is not None:
+            ok, info = st["ffmpeg"]
+            parts.append(f"ffmpeg {info}" if ok else f"ffmpeg: {info}")
+            if not ok:
+                color = STATUS_RED
+        self.lbl_engine_info.configure(text=" • ".join(parts), text_color=color)
+
+    def _on_auto_update_toggled(self):
+        self.settings.set("auto_update_ytdlp", bool(self.chk_auto_update.get()))
 
     # ──────────────────────────────────────────────────────
     # ГОРЯЧИЕ КЛАВИШИ
@@ -194,6 +249,10 @@ class MediaHarvesterApp(ctk.CTk):
             meta, text="Мультимедийный комбайн: YouTube • VK • Instagram • TikTok • X и другие",
             font=self.font_subtitle, text_color=TEXT_MUTED)
         self.lbl_header_sub.pack(anchor="w")
+        self.lbl_engine_info = ctk.CTkLabel(
+            meta, text="", font=ctk.CTkFont(family="Segoe UI", size=10),
+            text_color=TEXT_MUTED)
+        self.lbl_engine_info.pack(anchor="w")
 
         self.btn_nav_info = ctk.CTkButton(
             hdr, text="Справка", width=84, height=30, corner_radius=6,
@@ -607,7 +666,7 @@ class MediaHarvesterApp(ctk.CTk):
         self._section_label(self.card_folder, "Папка для сохранения")
 
         row = ctk.CTkFrame(self.card_folder, fg_color="transparent")
-        row.pack(fill="x", padx=14, pady=(0, 12))
+        row.pack(fill="x", padx=14, pady=(0, 6))
 
         self.entry_folder_path = ctk.CTkEntry(
             row, font=self.font_mono, height=34, corner_radius=6,
@@ -635,6 +694,15 @@ class MediaHarvesterApp(ctk.CTk):
             text_color=TEXT_SECONDARY,
             command=self.open_target_folder)
         self.btn_open_folder.pack(side="right")
+
+        self.chk_auto_update = ctk.CTkCheckBox(
+            self.card_folder, text="Автоматически обновлять yt-dlp",
+            font=self.font_small, text_color=TEXT_SECONDARY,
+            fg_color=ACCENT_BLUE, hover_color=ACCENT_BLUE_HOVER,
+            command=self._on_auto_update_toggled)
+        if self.settings.get("auto_update_ytdlp", True):
+            self.chk_auto_update.select()
+        self.chk_auto_update.pack(anchor="w", padx=14, pady=(0, 12))
 
     def _clear_url(self):
         self.entry_url.delete(0, "end")
