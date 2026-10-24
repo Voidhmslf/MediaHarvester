@@ -69,7 +69,12 @@ def extract_music_target(url: str) -> dict[str, Any] | None:
             "playlist_id": int(m.group(2)),
             "access_key": m.group(3) or "",
         }
-    m = re.search(r"vk\.com/id(\d+)", url)
+    # Одна песня: vk.com/audio-123_456 или ...?z=audio-123_456_ключ
+    m = re.search(r"audio(-?\d+)_(\d+)(?:_([a-zA-Z0-9]+))?", url)
+    if m:
+        return {"type": "track", "owner_id": int(m.group(1)), "audio_id": int(m.group(2)),
+                "access_key": m.group(3) or ""}
+    m = re.search(r"vk\.(?:com|ru)/(?:id|audios)(\d+)", url)
     if m:
         return {"type": "user", "user_id": int(m.group(1))}
     m = re.match(r"^-?\d+$", url.strip())
@@ -373,7 +378,8 @@ def download_vk_music(
 
     target = extract_music_target(url)
     if target is None:
-        raise ValueError("Не удалось распознать ссылку. Используйте vk.com/music/playlist/… или vk.com/id…")
+        raise ValueError("Не удалось распознать ссылку. Нужна ссылка на плейлист, песню (vk.com/audio…) "
+                         "или профиль (vk.com/id…)")
 
     progress_callback("Подключение к VK Music API...", "working", None, "")
 
@@ -388,6 +394,12 @@ def download_vk_music(
                 count=1000
             )
             folder_name = f"VK_Music_playlist_{target['playlist_id']}"
+        elif target["type"] == "track":
+            audio_id = f"{target['owner_id']}_{target['audio_id']}"
+            if target["access_key"]:
+                audio_id += f"_{target['access_key']}"
+            songs = service.get_songs_by_id([audio_id])
+            folder_name = "VK_Music_tracks"
         else:
             songs = service.get_songs_by_userid(
                 user_id=target["user_id"],

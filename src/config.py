@@ -33,8 +33,10 @@ AUTH_URL_PHOTOS = (
     "&redirect_uri=https://oauth.vk.com/blank.html"
     "&display=page&response_type=token&revoke=1"
 )
+# Музыку VK отдаёт только официальным клиентам: vkpymusic рассчитан на токен Kate Mobile (client_id 2685278)
+# и на её User-Agent (см. VK_MUSIC_USER_AGENT). Токен сторонних приложений даёт ошибку VK API 15.
 AUTH_URL_MUSIC = (
-    "https://oauth.vk.com/authorize?client_id=7497650"
+    "https://oauth.vk.com/authorize?client_id=2685278"
     "&scope=audio,offline"
     "&redirect_uri=https://oauth.vk.com/blank.html"
     "&display=page&response_type=token&revoke=1"
@@ -62,10 +64,10 @@ QUALITY_PRESETS = [
     "Только аудио (MP3)"
 ]
 
-# VK API user-agent, используемый vkpymusic для запросов аудио
+# User-Agent клиента, выдавшего токен (должен совпадать с клиентом из AUTH_URL_MUSIC)
 VK_MUSIC_USER_AGENT = (
-    "VKAndroidApp/8.52-17600 (Android 14; SDK 34; arm64-v8a; "
-    "Samsung Galaxy S24; ru; 2960x1440)"
+    "KateMobileAndroid/56 lite-460 (Android 4.4.2; SDK 19; x86; "
+    "unknown Android SDK built for x86; en)"
 )
 
 
@@ -128,14 +130,26 @@ class SettingsManager:
             self._data["download_path"] = os.path.normpath(value)
             self.save()
 
+    # Токены для фото и музыки выдают разные приложения VK, поэтому хранятся отдельно.
+    # Старый общий ключ "vk_token" считается токеном для фото.
+    def get_vk_token(self, kind: str = "photos") -> str:
+        key = f"vk_token_{kind}"
+        value = self._data.get(key)
+        if value is None and kind == "photos":
+            value = self._data.get("vk_token", "")
+        return str(value or "").strip()
+
+    def set_vk_token(self, kind: str, value: str) -> None:
+        self._data[f"vk_token_{kind}"] = value.strip()
+        self.save()
+
     @property
     def vk_token(self) -> str:
-        return str(self._data.get("vk_token", "")).strip()
+        return self.get_vk_token("photos")
 
     @vk_token.setter
     def vk_token(self, value: str) -> None:
-        self._data["vk_token"] = value.strip()
-        self.save()
+        self.set_vk_token("photos", value)
 
     @property
     def cookies_path(self) -> str:

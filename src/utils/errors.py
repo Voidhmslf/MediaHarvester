@@ -23,6 +23,19 @@ class ErrorInfo:
 
 # (kind, regex, сообщение, подсказка). Порядок важен: более конкретные правила — выше.
 _RULES: list[tuple[str, str, str, str]] = [
+    ("vk_scope", r"vk api error 15|no access to call this method|cannot be called with current scopes",
+     "VK не разрешил этому токену доступ (ошибка 15)",
+     "Для музыки войдите заново в режиме «Музыка» кнопкой «Войти через ВКонтакте» (нужен отдельный токен). "
+     "Если не помогает — проверьте, что плейлист или профиль открыты"),
+    ("vk_token", r"vk api error 5\b|user authorization failed|invalid access_token|access_token has expired",
+     "Токен VK недействителен или истёк",
+     "Нажмите «Войти через ВКонтакте» и подтвердите доступ заново"),
+    ("vk_private", r"vk api error (30|200|201|203)\b|this profile is private|access to .* denied",
+     "Доступ закрыт настройками приватности VK",
+     "Попросите автора открыть доступ или используйте ссылку на открытый материал"),
+    ("vk_flood", r"vk api error (6|9|29)\b|too many requests per second|flood control|rate limit reached",
+     "VK временно ограничил частоту запросов",
+     "Подождите несколько минут и повторите"),
     ("bot_check", r"confirm you.?re not a bot|not a bot",
      "YouTube просит подтвердить, что вы не бот",
      "Укажите cookies.txt из браузера, где вы вошли в YouTube, или повторите позже"),

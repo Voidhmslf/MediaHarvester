@@ -1,6 +1,7 @@
 import os
 import threading
 import time
+import tkinter as tk
 import webbrowser
 from tkinter import filedialog
 import customtkinter as ctk
@@ -34,6 +35,7 @@ from src.utils.helpers import (
 )
 from src.utils.ytdlp_updater import current_version as ytdlp_version, check_for_update
 from src.core.vk_auth import login_in_window, find_auth_result, fetch_user_name
+from src.utils import clipboard as sysclip
 from src.utils.errors import explain_error
 from src.utils.logger import setup_logging, get_logger, get_log_dir, register_secret, redact
 from src.utils.report import build_report, format_failures
@@ -74,7 +76,8 @@ class MediaHarvesterApp(ctk.CTk):
 
         setup_logging()
         self.settings = SettingsManager()
-        register_secret(self.settings.vk_token)
+        for kind in ("photos", "music"):
+            register_secret(self.settings.get_vk_token(kind))
         self.cancel_event = threading.Event()
 
         self.title("MediaHarvester")
@@ -120,6 +123,8 @@ class MediaHarvesterApp(ctk.CTk):
         self.last_errors: list[QueueItem] = []
         self.current_screen: str = "downloader"
         self._auth_url: str = AUTH_URL_PHOTOS
+        self._token_kind: str = "photos"   # какой токен сейчас показан: "photos" или "music"
+        self._login_kind: str = "photos"   # для какого вида идёт вход в данный момент
         self._login_busy: bool = False
         self._login_cancel = threading.Event()
         self._clipboard_watch_until: float = 0.0
@@ -135,7 +140,7 @@ class MediaHarvesterApp(ctk.CTk):
         self.setup_adaptive_resizing()
 
         # Восстановление сохраненных данных
-        saved_token = self.settings.vk_token
+        saved_token = self.settings.get_vk_token(self._token_kind)
         if saved_token:
             self.entry_token.insert(0, saved_token)
 
@@ -208,18 +213,82 @@ class MediaHarvesterApp(ctk.CTk):
     # ──────────────────────────────────────────────────────
     # ГОРЯЧИЕ КЛАВИШИ
     # ──────────────────────────────────────────────────────
-    def setup_keybindings(self):
-        self.bind_all("<Control-v>", self._handle_ctrl_v, add="+")
-        self.bind_all("<Control-V>", self._handle_ctrl_v, add="+")
+    # Коды клавиш Windows: не зависят от раскладки (в русской раскладке Ctrl+М — это та же клавиша V)
+    _VK_A, _VK_C, _VK_V, _VK_X = 65, 67, 86, 88
 
-    def _handle_ctrl_v(self, event):
-        focused = self.focus_get()
-        if focused is getattr(self.entry_token, "_entry", None):
-            self.paste_clipboard(self.entry_token)
-            return "break"
-        if focused is getattr(self.entry_url, "_entry", None):
-            self.paste_clipboard(self.entry_url)
-            return "break"
+    def setup_keybindings(self):
+        for entry in (self.entry_url, self.entry_token):
+            entry.bind("<Control-KeyPress>", lambda e, ent=entry: self._on_edit_key(e, ent))
+            entry.bind("<Button-3>", lambda e, ent=entry: self._show_entry_menu(e, ent))
+
+    def _on_edit_key(self, event, entry):
+        """Ctrl+V/C/X/A в полях ввода в любой раскладке (возврат "break" отключает стандартную обработку)."""
+        if event.state & 0x20000:  # Alt (в т.ч. AltGr) — не наш случай
+            return None
+        code = event.keycode
+        if code == self._VK_V:
+            self.paste_clipboard(entry)
+        elif code == self._VK_C:
+            self._copy_from_entry(entry, cut=False)
+        elif code == self._VK_X:
+            self._copy_from_entry(entry, cut=True)
+        elif code == self._VK_A:
+            entry._entry.select_range(0, "end")
+            entry._entry.icursor("end")
+        else:
+            return None
+        return "break"
+
+    def _show_entry_menu(self, event, entry):
+        """Контекстное меню поля ввода (правая кнопка мыши)."""
+        entry.focus_set()
+        menu = tk.Menu(self, tearoff=0, bg=SURFACE_CARD, fg=TEXT_MAIN, activebackground=ACCENT_BLUE,
+                       activeforeground=TEXT_MAIN, bd=0)
+        menu.add_command(label="Вырезать", command=lambda: self._copy_from_entry(entry, cut=True))
+        menu.add_command(label="Копировать", command=lambda: self._copy_from_entry(entry, cut=False))
+        menu.add_command(label="Вставить", command=lambda: self.paste_clipboard(entry))
+        menu.add_separator()
+        menu.add_command(label="Выделить всё",
+                         command=lambda: (entry._entry.select_range(0, "end"), entry._entry.icursor("end")))
+        try:
+            menu.tk_popup(event.x_root, event.y_root)
+        finally:
+            menu.grab_release()
+
+    def _read_clipboard(self) -> str | None:
+        """Текст из буфера обмена (Win32, запасной путь — Tk). None, если прочитать не удалось."""
+        text = sysclip.get_text()
+        if text is None:
+            try:
+                text = self.clipboard_get()
+            except Exception:
+                log.warning("Не удалось прочитать буфер обмена")
+                return None
+        return text
+
+    def _write_clipboard(self, text: str) -> None:
+        if not sysclip.set_text(text):
+            self.clipboard_clear()
+            self.clipboard_append(text)
+
+    def _copy_from_entry(self, entry, cut: bool):
+        inner = entry._entry
+        try:
+            text = inner.selection_get()
+            has_selection = True
+        except tk.TclError:
+            text, has_selection = entry.get(), False
+        if text:
+            self._write_clipboard(text)
+        if cut and text:
+            if has_selection:
+                inner.delete("sel.first", "sel.last")
+            else:
+                entry.delete(0, "end")
+            if entry is self.entry_url:
+                self._on_url_changed()
+            else:
+                self._on_token_changed()
 
     # ──────────────────────────────────────────────────────
     # АДАПТИВНОЕ МАСШТАБИРОВАНИЕ
@@ -231,11 +300,11 @@ class MediaHarvesterApp(ctk.CTk):
         if event is not None and event.widget is not self:
             return
         w = self.winfo_width()
-        card_wrap = max(200, w - 58)
+        card_wrap = max(200, w - 70)
         for attr in ("lbl_token_hint", "lbl_url_hint", "lbl_quality_info", "lbl_cookies_hint"):
             lbl = getattr(self, attr, None)
             if lbl:
-                lbl.configure(wraplength=card_wrap)
+                lbl.configure(wraplength=card_wrap, anchor="w")
         if hasattr(self, "info_labels"):
             for lbl in self.info_labels:
                 lbl.configure(wraplength=card_wrap)
@@ -751,7 +820,7 @@ class MediaHarvesterApp(ctk.CTk):
         engine = detected.get("engine", "none")
 
         if engine in ("vk_photos", "vk_music"):
-            self._auth_url = AUTH_URL_PHOTOS if engine == "vk_photos" else AUTH_URL_MUSIC
+            self._set_token_kind("photos" if engine == "vk_photos" else "music")
             self.card_quality.pack_forget()
             if not self.card_token.winfo_ismapped():
                 self.card_token.pack(fill="x", padx=2, pady=(0, 10), before=self.card_cookies)
@@ -1184,7 +1253,7 @@ class MediaHarvesterApp(ctk.CTk):
             self.update_status("Режим: Умное автоопределение (Smart)", state="idle")
 
         elif "Видео" in choice:
-            self._auth_url = AUTH_URL_PHOTOS
+            self._set_token_kind("photos")
             self.card_token.pack_forget()
             if not self.card_quality.winfo_ismapped():
                 self.card_quality.pack(fill="x", padx=2, pady=(0, 10), before=self.card_cookies)
@@ -1201,7 +1270,7 @@ class MediaHarvesterApp(ctk.CTk):
             self.update_status("Режим: галереи и посты (Pinterest, X, Reddit, TikTok)", state="idle")
 
         elif "Фотографии" in choice:
-            self._auth_url = AUTH_URL_PHOTOS
+            self._set_token_kind("photos")
             self.card_quality.pack_forget()
             if not self.card_token.winfo_ismapped():
                 self.card_token.pack(fill="x", padx=2, pady=(0, 10), before=self.card_cookies)
@@ -1211,7 +1280,7 @@ class MediaHarvesterApp(ctk.CTk):
             self.update_status("Режим: фотоальбомы ВКонтакте", state="idle")
 
         elif "Музыка" in choice:
-            self._auth_url = AUTH_URL_MUSIC
+            self._set_token_kind("music")
             avail = VKPYMUSIC_AVAILABLE
             self.card_quality.pack_forget()
             if not self.card_token.winfo_ismapped():
@@ -1220,8 +1289,8 @@ class MediaHarvesterApp(ctk.CTk):
                 fg_color=ACCENT_BLUE if avail else SURFACE_CARD_BORDER,
                 hover_color=ACCENT_BLUE_HOVER if avail else SURFACE_INNER_BORDER)
             self.lbl_token_hint.configure(
-                text=("Для музыки токен запрашивается с правом на аудио — "
-                      "войдите заново, если раньше входили в режиме фото.")
+                text=("Для музыки нужен отдельный вход (токен Kate Mobile): подтвердите доступ в браузере "
+                      "и скопируйте адрес страницы — токен подхватится сам. Токен для фото сюда не подходит")
                 if avail else
                 "Библиотека vkpymusic не установлена. Запустите: pip install vkpymusic")
             self._update_token_badge()
@@ -1230,6 +1299,18 @@ class MediaHarvesterApp(ctk.CTk):
                 state="idle" if avail else "error")
 
         self.update_idletasks()
+
+    def _set_token_kind(self, kind: str):
+        """Переключает поле токена на токен для фото или для музыки (их выдают разные приложения VK)."""
+        self._auth_url = AUTH_URL_MUSIC if kind == "music" else AUTH_URL_PHOTOS
+        if kind == self._token_kind:
+            return
+        self._token_kind = kind
+        self.entry_token.delete(0, "end")
+        token = self.settings.get_vk_token(kind)
+        if token:
+            self.entry_token.insert(0, token)
+        self._update_token_badge()
 
     def _update_token_badge(self):
         token = self.entry_token.get().strip()
@@ -1248,8 +1329,8 @@ class MediaHarvesterApp(ctk.CTk):
     def _on_token_changed(self, event=None):
         raw = self.entry_token.get().strip()
         extracted = extract_token(raw)
-        if extracted != self.settings.vk_token:
-            self.settings.vk_token = extracted
+        if extracted != self.settings.get_vk_token(self._token_kind):
+            self.settings.set_vk_token(self._token_kind, extracted)
             register_secret(extracted)
         self._update_token_badge()
 
@@ -1271,6 +1352,7 @@ class MediaHarvesterApp(ctk.CTk):
             self._clipboard_watch_until = 0.0
             return
         self._login_cancel.clear()
+        self._login_kind = self._token_kind
         self._set_login_busy(True)
         self.update_status("Открыто окно входа ВКонтакте. Подтвердите доступ...", state="working")
         url = self._auth_url
@@ -1306,6 +1388,7 @@ class MediaHarvesterApp(ctk.CTk):
             self._clipboard_watch_until = 0.0
             return
         self._login_cancel.clear()
+        self._login_kind = self._token_kind
         self._set_login_busy(True)
         webbrowser.open(self._auth_url)
         self._clipboard_watch_until = time.monotonic() + 600
@@ -1324,14 +1407,11 @@ class MediaHarvesterApp(ctk.CTk):
                 "Время на вход истекло" if timed_out else "Вход отменён",
                 state="warning" if timed_out else "idle")
             return
-        try:
-            text = self.clipboard_get()
-        except Exception:
-            text = ""
+        text = self._read_clipboard() or ""
         result = find_auth_result(text)
         if result:
             self._set_login_busy(False)
-            self.clipboard_clear()  # токен не должен оставаться в буфере обмена
+            sysclip.clear()  # токен не должен оставаться в буфере обмена (Tk-буфер не трогаем: он залипает)
             self._accept_vk_token(result.token)
             return
         self.after(700, self._watch_clipboard)
@@ -1339,9 +1419,10 @@ class MediaHarvesterApp(ctk.CTk):
     def _accept_vk_token(self, token: str):
         """Сохраняет токен, показывает его в поле и проверяет владельца в фоне."""
         register_secret(token)
-        self.settings.vk_token = token
-        self.entry_token.delete(0, "end")
-        self.entry_token.insert(0, token)
+        self.settings.set_vk_token(self._login_kind, token)
+        if self._login_kind == self._token_kind:
+            self.entry_token.delete(0, "end")
+            self.entry_token.insert(0, token)
         self._update_token_badge()
         try:
             self.deiconify()
@@ -1383,16 +1464,14 @@ class MediaHarvesterApp(ctk.CTk):
         self.entry_folder_path.configure(state="readonly")
 
     def paste_clipboard(self, entry_widget):
-        try:
-            text = self.clipboard_get().strip()
-        except Exception:
-            return
+        text = (self._read_clipboard() or "").strip()
         if not text:
+            self.update_status("Буфер обмена пуст: сначала скопируйте ссылку (Ctrl+C)", state="warning")
             return
 
         if entry_widget is self.entry_token:
             text = extract_token(text)
-            self.settings.vk_token = text
+            self.settings.set_vk_token(self._token_kind, text)
             register_secret(text)
 
         if entry_widget is self.entry_url and len(parse_urls(text)) > 1:
@@ -1501,7 +1580,7 @@ class MediaHarvesterApp(ctk.CTk):
         # Снимок настроек из интерфейса (рабочий поток не трогает виджеты)
         opts = {
             "mode": self.combo_mode.get(),
-            "token_raw": self.entry_token.get().strip(),
+            "tokens": {kind: self.settings.get_vk_token(kind) for kind in ("photos", "music")},
             "cookies_path": self.settings.cookies_path,
             "quality": self.combo_quality.get(),
             "allow_playlist": bool(self.chk_playlist.get()),
@@ -1606,7 +1685,7 @@ class MediaHarvesterApp(ctk.CTk):
             )
         if engine == "vk_photos":
             return download_vk_photos(
-                token_raw=opts["token_raw"],
+                token_raw=opts["tokens"]["photos"],
                 url=target_url,
                 download_path=download_path,
                 progress_callback=cb,
@@ -1614,7 +1693,7 @@ class MediaHarvesterApp(ctk.CTk):
             )
         if engine == "vk_music":
             return download_vk_music(
-                token_raw=opts["token_raw"],
+                token_raw=opts["tokens"]["music"],
                 url=target_url,
                 download_path=download_path,
                 progress_callback=cb,
