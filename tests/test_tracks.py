@@ -223,5 +223,25 @@ class TrackModeUiTests(unittest.TestCase):
         self.assertFalse(self.app.btn_experiment.winfo_ismapped())
 
 
+class TaggingTests(unittest.TestCase):
+    def test_artist_and_title_are_written_to_a_real_mp3(self):
+        try:
+            import mutagen  # noqa: F401
+            from mutagen.easyid3 import EasyID3
+        except ImportError:
+            self.skipTest("mutagen не установлен")
+        from src.utils.helpers import FFMPEG_PATH
+        if not FFMPEG_PATH:
+            self.skipTest("нет ffmpeg")
+        import subprocess
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "a.mp3")
+            subprocess.run([FFMPEG_PATH, "-y", "-f", "lavfi", "-i", "sine=duration=1", path],
+                           capture_output=True, check=True)
+            ts._tag_mp3(path, ts.Track(query="q", artist="Кино", title="Группа крови"))
+            tags = EasyID3(path)
+            self.assertEqual((tags["artist"], tags["title"]), (["Кино"], ["Группа крови"]))
+
+
 if __name__ == "__main__":
     unittest.main()
