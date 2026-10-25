@@ -50,6 +50,7 @@ CONTENT_MODES = [
     "Галереи и посты (Pinterest, X, Reddit, TikTok)",
     "Фотографии ВК (Альбом)",
     "Музыка ВК (Плейлист / Профиль)",
+    "Треки по списку (поиск на YouTube)",
 ]
 
 # Опции качества видео
@@ -63,6 +64,16 @@ QUALITY_PRESETS = [
     "360p",
     "Только аудио (MP3)"
 ]
+
+# ЭКСПЕРИМЕНТ: вход от имени официального приложения VK для Android (client_id и User-Agent взяты из
+# vkpymusic.client.VkMobileClient). Нарушает правила VK и может привести к ограничениям аккаунта.
+AUTH_URL_MUSIC_ANDROID = (
+    "https://oauth.vk.com/authorize?client_id=2274003"
+    "&scope=audio,offline"
+    "&redirect_uri=https://oauth.vk.com/blank.html"
+    "&display=page&response_type=token&revoke=1"
+)
+VK_ANDROID_USER_AGENT = "VKAndroidApp/4.13.1-1206 (Android 4.4.3; SDK 19; armeabi; ; ru)"
 
 # User-Agent клиента, выдавшего токен (должен совпадать с клиентом из AUTH_URL_MUSIC)
 VK_MUSIC_USER_AGENT = (

@@ -420,7 +420,8 @@ def download_vk_music(
     url: str,
     download_path: str,
     progress_callback: Callable[[str, str, float | None, str], None],
-    cancel_event: threading.Event | None = None
+    cancel_event: threading.Event | None = None,
+    user_agent: str = VK_MUSIC_USER_AGENT
 ) -> str:
     """
     Скачивает музыку из плейлиста или профиля VK с поддержкой до 1000 треков и отменой загрузки.
@@ -441,7 +442,7 @@ def download_vk_music(
     progress_callback("Подключение к VK Music API...", "working", None, "")
 
     try:
-        service = VkMusicService(user_agent=VK_MUSIC_USER_AGENT, token=token)
+        service = VkMusicService(user_agent=user_agent, token=token)
 
         if target["type"] == "playlist":
             songs = service.get_songs_by_playlist_id(

@@ -26,6 +26,8 @@ from src.config import (
     CONTENT_MODES,
     QUALITY_PRESETS,
     VK_MUSIC_USER_AGENT,
+    VK_ANDROID_USER_AGENT,
+    AUTH_URL_MUSIC_ANDROID,
     SettingsManager,
 )
 from src.utils.helpers import (
@@ -44,6 +46,7 @@ from src.utils.report import build_report, format_failures
 log = get_logger("app")
 from src.core.router import detect_url_type, gallery_platform_name
 from src.core.gallery_engine import download_gallery
+from src.core.track_search import download_track_list, parse_track_list
 from src.core.download_queue import (
     QueueItem,
     parse_urls,
@@ -124,7 +127,8 @@ class MediaHarvesterApp(ctk.CTk):
         self.last_errors: list[QueueItem] = []
         self.current_screen: str = "downloader"
         self._auth_url: str = AUTH_URL_PHOTOS
-        self._token_kind: str = "photos"   # какой токен сейчас показан: "photos" или "music"
+        self._tracklist_mode: bool = False  # режим «Треки по списку»: вместо ссылок показывается список
+        self._token_kind: str = "photos"   # какой токен показан: "photos", "music" (Kate) или "music_android" (эксперимент)
         self._login_kind: str = "photos"   # для какого вида идёт вход в данный момент
         self._login_busy: bool = False
         self._login_cancel = threading.Event()
@@ -300,9 +304,13 @@ class MediaHarvesterApp(ctk.CTk):
     def _on_window_configure(self, event=None):
         if event is not None and event.widget is not self:
             return
-        w = self.winfo_width()
-        card_wrap = max(200, w - 70)
-        for attr in ("lbl_token_hint", "lbl_url_hint", "lbl_quality_info", "lbl_cookies_hint"):
+        try:
+            scaling = self._get_window_scaling() or 1.0
+        except Exception:
+            scaling = 1.0
+        w = int(self.winfo_width() / scaling)  # CustomTkinter задаёт перенос строк в логических пикселях
+        card_wrap = max(200, w - 92)
+        for attr in ("lbl_token_hint", "lbl_url_hint", "lbl_quality_info", "lbl_cookies_hint", "lbl_tracks_hint"):
             lbl = getattr(self, attr, None)
             if lbl:
                 lbl.configure(wraplength=card_wrap, anchor="w")
@@ -370,6 +378,7 @@ class MediaHarvesterApp(ctk.CTk):
         self._build_mode_card()
         self._build_url_card()
         self._build_queue_card()
+        self._build_tracklist_card()
         self._build_quality_card()
         self._build_token_card()
         self._build_cookies_card()
@@ -396,6 +405,7 @@ class MediaHarvesterApp(ctk.CTk):
 
     def _build_mode_card(self):
         card = self._card(self.main_scroll)
+        self.card_mode = card
         self._section_label(card, "Режим загрузки")
         self.combo_mode = ctk.CTkOptionMenu(
             card,
@@ -558,7 +568,7 @@ class MediaHarvesterApp(ctk.CTk):
         self._refresh_queue_view()
 
     def _refresh_queue_view(self):
-        if not self.queue:
+        if not self.queue or self._tracklist_mode:
             self.card_queue.pack_forget()
             return
 
@@ -596,6 +606,112 @@ class MediaHarvesterApp(ctk.CTk):
                 state="disabled" if self.is_downloading else "normal",
                 command=lambda it=item: self.remove_queue_item(it)
             ).pack(side="right", padx=4)
+
+    # ──────────────────────────────────────────────────────
+    # РЕЖИМ «ТРЕКИ ПО СПИСКУ»
+    # ──────────────────────────────────────────────────────
+    def _build_tracklist_card(self):
+        # Карточка показывается только в режиме «Треки по списку» (см. _set_tracklist_mode)
+        self.card_tracklist = ctk.CTkFrame(
+            self.main_scroll, fg_color=SURFACE_CARD, corner_radius=6,
+            border_width=1, border_color=SURFACE_CARD_BORDER)
+
+        hrow = ctk.CTkFrame(self.card_tracklist, fg_color="transparent")
+        hrow.pack(fill="x", padx=14, pady=(10, 6))
+        ctk.CTkLabel(hrow, text="Список треков", font=self.font_section,
+                     text_color=TEXT_SECONDARY).pack(side="left")
+        self.lbl_tracks_count = ctk.CTkLabel(
+            hrow, text="Треков: 0", font=ctk.CTkFont(family="Segoe UI", size=10),
+            fg_color=SURFACE_INNER, text_color=TEXT_MUTED, corner_radius=4, padx=6, pady=2)
+        self.lbl_tracks_count.pack(side="right")
+
+        self.txt_tracks = ctk.CTkTextbox(
+            self.card_tracklist, height=190, font=self.font_main, wrap="word",
+            fg_color=SURFACE_INNER, border_width=1, border_color=SURFACE_INNER_BORDER,
+            text_color=TEXT_MAIN)
+        self.txt_tracks.pack(fill="x", padx=14, pady=(0, 6))
+        self.txt_tracks.bind("<KeyRelease>", lambda e: self._on_tracks_changed())
+        self.txt_tracks.bind("<Control-KeyPress>", self._on_text_key)
+
+        btns = ctk.CTkFrame(self.card_tracklist, fg_color="transparent")
+        btns.pack(fill="x", padx=14, pady=(0, 6))
+        ctk.CTkButton(
+            btns, text="Вставить", width=84, height=30, corner_radius=6, font=self.font_small,
+            fg_color=SURFACE_CARD_BORDER, hover_color=SURFACE_INNER_BORDER, text_color=TEXT_SECONDARY,
+            command=self._paste_into_tracks).pack(side="left")
+        ctk.CTkButton(
+            btns, text="Очистить", width=84, height=30, corner_radius=6, font=self.font_small,
+            fg_color=SURFACE_CARD_BORDER, hover_color=SURFACE_INNER_BORDER, text_color=TEXT_MUTED,
+            command=self._clear_tracks).pack(side="left", padx=(6, 0))
+
+        self.lbl_tracks_hint = ctk.CTkLabel(
+            self.card_tracklist,
+            text=("По одному треку в строке: «Исполнитель — Название» (нумерация и пустые строки допустимы). "
+                  "Каждый трек ищется на YouTube и сохраняется в MP3 в лучшем доступном качестве. "
+                  "К VK приложение не обращается: токен не нужен. Это не те же файлы, что в VK, "
+                  "и редкие треки могут не найтись — их список сохранится в _not_found.txt"),
+            font=self.font_subtitle, text_color=TEXT_MUTED, justify="left", anchor="w", wraplength=440)
+        self.lbl_tracks_hint.pack(anchor="w", padx=14, pady=(0, 10))
+
+    def _set_tracklist_mode(self, on: bool):
+        """Режим списка: вместо поля ссылки, очереди, качества и токена показывается список треков."""
+        self._tracklist_mode = on
+        if on:
+            for card in (self.card_url, self.card_queue, self.card_quality, self.card_token):
+                card.pack_forget()
+            if not self.card_tracklist.winfo_ismapped():
+                self.card_tracklist.pack(fill="x", padx=2, pady=(0, 10), after=self.card_mode)
+        else:
+            self.card_tracklist.pack_forget()
+            if not self.card_url.winfo_ismapped():
+                self.card_url.pack(fill="x", padx=2, pady=(0, 10), after=self.card_mode)
+            self._refresh_queue_view()
+
+    def _on_tracks_changed(self):
+        count = len(parse_track_list(self.txt_tracks.get("1.0", "end")))
+        self.lbl_tracks_count.configure(text=f"Треков: {count}",
+                                        text_color=STATUS_GREEN if count else TEXT_MUTED)
+
+    def _clear_tracks(self):
+        self.txt_tracks.delete("1.0", "end")
+        self._on_tracks_changed()
+
+    def _paste_into_tracks(self):
+        text = self._read_clipboard()
+        if not text or not text.strip():
+            self.update_status("Буфер обмена пуст: сначала скопируйте список треков (Ctrl+C)", state="warning")
+            return
+        box = self.txt_tracks._textbox
+        try:
+            box.delete("sel.first", "sel.last")
+        except tk.TclError:
+            pass
+        box.insert("insert", text)
+        self._on_tracks_changed()
+
+    def _on_text_key(self, event):
+        """Ctrl+V/C/X/A в списке треков в любой раскладке."""
+        if event.state & 0x20000:
+            return None
+        box = self.txt_tracks._textbox
+        code = event.keycode
+        if code == self._VK_V:
+            self._paste_into_tracks()
+        elif code in (self._VK_C, self._VK_X):
+            try:
+                selected = box.get("sel.first", "sel.last")
+            except tk.TclError:
+                selected = ""
+            if selected:
+                self._write_clipboard(selected)
+                if code == self._VK_X:
+                    box.delete("sel.first", "sel.last")
+                    self._on_tracks_changed()
+        elif code == self._VK_A:
+            box.tag_add("sel", "1.0", "end-1c")
+        else:
+            return None
+        return "break"
 
     def _build_quality_card(self):
         self.card_quality = self._card(self.main_scroll)
@@ -679,6 +795,15 @@ class MediaHarvesterApp(ctk.CTk):
             fg_color="transparent", hover_color=SURFACE_CARD_BORDER,
             text_color=TEXT_MUTED, command=self.check_vk_token)
         self.btn_token_check.pack(fill="x", padx=14, pady=(0, 8))
+
+        self.btn_experiment = ctk.CTkButton(
+            self.card_token, text="⚠ Эксперимент: войти как официальное приложение VK…",
+            height=24, corner_radius=4, font=self.font_small,
+            fg_color="transparent", hover_color=SURFACE_CARD_BORDER,
+            text_color=STATUS_AMBER, command=self.toggle_experimental_client)
+        self.lbl_experiment_warning = ctk.CTkLabel(
+            self.card_token, text="", font=ctk.CTkFont(family="Segoe UI", size=10),
+            text_color=STATUS_AMBER, justify="left", wraplength=420)
 
         erow = ctk.CTkFrame(self.card_token, fg_color="transparent")
         erow.pack(fill="x", padx=14, pady=(0, 6))
@@ -828,7 +953,7 @@ class MediaHarvesterApp(ctk.CTk):
         engine = detected.get("engine", "none")
 
         if engine in ("vk_photos", "vk_music"):
-            self._set_token_kind("photos" if engine == "vk_photos" else "music")
+            self._set_token_kind("photos" if engine == "vk_photos" else self._music_kind())
             self.card_quality.pack_forget()
             if not self.card_token.winfo_ismapped():
                 self.card_token.pack(fill="x", padx=2, pady=(0, 10), before=self.card_cookies)
@@ -982,6 +1107,23 @@ class MediaHarvesterApp(ctk.CTk):
             "и техническую причину по каждой ссылке. «Скопировать отчёт» собирает всё для разработчика: "
             "версии, ошибки и последние строки лога (токены и ключи в ссылках скрываются).\n"
             "Лог хранится в %LOCALAPPDATA%\\MediaHarvester\\logs — откройте его кнопкой в окне «Подробнее».")
+
+        self._info_section(
+            "Треки по списку (без VK)",
+            "Режим «Треки по списку (поиск на YouTube)»: вставьте список строк «Исполнитель — Название» "
+            "(например, скопированный из плейлиста VK или из архива данных VK). Приложение найдёт каждый трек "
+            "на YouTube, выберет оригинал (канал «Topic», официальное аудио; лайвы, каверы и ремиксы "
+            "отсеиваются) и сохранит MP3 с тегами.\n"
+            "Уже скачанные треки пропускаются, ненайденные записываются в _not_found.txt. "
+            "К VK приложение при этом не обращается и токен не требует.")
+
+        self._info_section(
+            "⚠ Музыка VK и экспериментальный вход",
+            "VK не отдаёт музыку сторонним программам, поэтому режим «Музыка ВК» может не работать "
+            "(ошибки 3, 9, 15). Кнопка «Эксперимент: войти как официальное приложение VK» пробует войти "
+            "от имени приложения VK для Android. Это нарушает правила VK: возможны запросы подтверждения, "
+            "ограничения и блокировка аккаунта. Пользуйтесь ей только на свой риск и лучше с запасным аккаунтом. "
+            "Безопасная альтернатива — «Треки по списку».")
 
         self._info_section(
             "Очередь ссылок",
@@ -1257,6 +1399,7 @@ class MediaHarvesterApp(ctk.CTk):
     def on_mode_change(self, choice: str):
         url = self.entry_url.get().strip()
         detected = detect_url_type(url)
+        self._set_tracklist_mode("по списку" in choice)
 
         if "Автоопределение" in choice:
             self._apply_smart_routing(detected)
@@ -1289,8 +1432,11 @@ class MediaHarvesterApp(ctk.CTk):
             self._update_token_badge()
             self.update_status("Режим: фотоальбомы ВКонтакте", state="idle")
 
+        elif "по списку" in choice:
+            self.update_status("Режим: треки по списку (поиск на YouTube, без обращения к VK)", state="idle")
+
         elif "Музыка" in choice:
-            self._set_token_kind("music")
+            self._set_token_kind(self._music_kind())
             avail = VKPYMUSIC_AVAILABLE
             self.card_quality.pack_forget()
             if not self.card_token.winfo_ismapped():
@@ -1299,9 +1445,7 @@ class MediaHarvesterApp(ctk.CTk):
                 fg_color=ACCENT_BLUE if avail else SURFACE_CARD_BORDER,
                 hover_color=ACCENT_BLUE_HOVER if avail else SURFACE_INNER_BORDER)
             self.lbl_token_hint.configure(
-                text=("Для музыки нужен отдельный вход (токен Kate Mobile): подтвердите доступ в браузере "
-                      "и скопируйте адрес страницы — токен подхватится сам. Токен для фото сюда не подходит")
-                if avail else
+                text=self._music_hint() if avail else
                 "Библиотека vkpymusic не установлена. Запустите: pip install vkpymusic")
             self._update_token_badge()
             self.update_status(
@@ -1312,8 +1456,9 @@ class MediaHarvesterApp(ctk.CTk):
 
     def _set_token_kind(self, kind: str):
         """Переключает поле токена на токен для фото или для музыки (их выдают разные приложения VK)."""
-        self._auth_url = AUTH_URL_MUSIC if kind == "music" else AUTH_URL_PHOTOS
+        self._auth_url = {"music": AUTH_URL_MUSIC, "music_android": AUTH_URL_MUSIC_ANDROID}.get(kind, AUTH_URL_PHOTOS)
         if kind == self._token_kind:
+            self._update_experiment_ui()
             return
         self._token_kind = kind
         self.entry_token.delete(0, "end")
@@ -1321,6 +1466,103 @@ class MediaHarvesterApp(ctk.CTk):
         if token:
             self.entry_token.insert(0, token)
         self._update_token_badge()
+        self._update_experiment_ui()
+
+    def _music_kind(self) -> str:
+        """Какой токен нужен для музыки: обычный (Kate Mobile) или экспериментальный (VK для Android)."""
+        return "music_android" if self.settings.get("music_client", "kate") == "android" else "music"
+
+    def _music_hint(self) -> str:
+        if self._music_kind() == "music_android":
+            return ("ЭКСПЕРИМЕНТ: вход от имени приложения VK для Android. Подтвердите доступ в браузере "
+                    "и скопируйте адрес страницы. Возможны ограничения аккаунта VK")
+        return ("VK сейчас может не отдавать музыку по этому токену — тогда используйте режим «Треки по списку». "
+                "Вход: подтвердите доступ в браузере и скопируйте адрес страницы")
+
+    def _update_experiment_ui(self):
+        """Кнопка эксперимента и предупреждение видны только для музыки VK."""
+        is_music = self._token_kind in ("music", "music_android")
+        if not is_music:
+            self.btn_experiment.pack_forget()
+            self.lbl_experiment_warning.pack_forget()
+            return
+        android = self._token_kind == "music_android"
+        self.btn_experiment.configure(
+            text="Вернуться к обычному входу (Kate Mobile)" if android
+            else "⚠ Эксперимент: войти как официальное приложение VK…")
+        self.lbl_experiment_warning.configure(
+            text=("Включён экспериментальный вход. Он нарушает правила VK: возможны запрос подтверждений, "
+                  "ограничения и блокировка аккаунта." if android else
+                  "Эксперимент нарушает правила VK и может привести к ограничениям аккаунта (подробности — по кнопке)."))
+        if not self.btn_experiment.winfo_ismapped():
+            self.btn_experiment.pack(fill="x", padx=14, pady=(0, 2), after=self.btn_token_check)
+        if not self.lbl_experiment_warning.winfo_ismapped():
+            self.lbl_experiment_warning.pack(anchor="w", padx=14, pady=(0, 8), after=self.btn_experiment)
+        self.lbl_token_hint.configure(text=self._music_hint())
+
+    def toggle_experimental_client(self):
+        """Включает/выключает экспериментальный вход музыки через приложение VK для Android."""
+        if self._login_busy:
+            return
+        if self._token_kind == "music_android":
+            self.settings.set("music_client", "kate")
+            self._set_token_kind("music")
+            self.update_status("Вернулся обычный вход для музыки (Kate Mobile)", state="idle")
+            return
+        if not self._confirm_experiment():
+            return
+        self.settings.set("music_client", "android")
+        self._set_token_kind("music_android")
+        log.warning("Включён экспериментальный вход музыки через VK для Android")
+        self.start_browser_login()
+
+    def _confirm_experiment(self) -> bool:
+        """Окно с предупреждением о рисках; продолжить можно только после явного согласия."""
+        dialog = ctk.CTkToplevel(self)
+        dialog.title("Эксперимент: риск для аккаунта")
+        dialog.geometry("520x400")
+        dialog.configure(fg_color=BG_MAIN)
+        dialog.transient(self)
+        result = {"ok": False}
+        try:
+            if os.path.exists(self.icon_path):
+                dialog.after(250, lambda: dialog.iconbitmap(self.icon_path))
+        except Exception:
+            pass
+
+        ctk.CTkLabel(dialog, text="⚠ Вход как официальное приложение VK", font=self.font_title,
+                     text_color=STATUS_AMBER).pack(anchor="w", padx=18, pady=(16, 8))
+        ctk.CTkLabel(
+            dialog, justify="left", anchor="w", font=self.font_main, text_color=TEXT_SECONDARY, wraplength=480,
+            text=("VK не отдаёт музыку сторонним программам. Этот вариант пробует войти от имени официального "
+                  "приложения VK для Android, чтобы получить доступ к аудио.\n\n"
+                  "Что может случиться:\n"
+                  "•  VK сочтёт вход подозрительным: запросит подтверждение, разлогинит устройства;\n"
+                  "•  временные ограничения аккаунта;\n"
+                  "•  в худшем случае — блокировка аккаунта.\n\n"
+                  "Это нарушает правила VK. Используйте запасной аккаунт, а не основной. "
+                  "Безопасная альтернатива без обращения к VK — режим «Треки по списку».\n\n"
+                  "Авторы программы не отвечают за последствия для аккаунта.")
+        ).pack(anchor="w", padx=18)
+
+        agree = ctk.CTkCheckBox(dialog, text="Я понимаю риск и действую на свой страх", font=self.font_main,
+                                text_color=TEXT_MAIN, fg_color=ACCENT_BLUE, hover_color=ACCENT_BLUE_HOVER)
+        agree.pack(anchor="w", padx=18, pady=(12, 8))
+
+        buttons = ctk.CTkFrame(dialog, fg_color="transparent")
+        buttons.pack(fill="x", padx=18, pady=(0, 14))
+        btn_go = ctk.CTkButton(buttons, text="Продолжить", height=34, corner_radius=6, font=self.font_main,
+                               fg_color=STATUS_RED, hover_color="#A83232", text_color=TEXT_MAIN, state="disabled",
+                               command=lambda: (result.update(ok=True), dialog.destroy()))
+        btn_go.pack(side="right")
+        ctk.CTkButton(buttons, text="Отмена", height=34, corner_radius=6, font=self.font_main,
+                      fg_color=SURFACE_CARD_BORDER, hover_color=SURFACE_INNER_BORDER, text_color=TEXT_SECONDARY,
+                      command=dialog.destroy).pack(side="right", padx=(0, 8))
+        agree.configure(command=lambda: btn_go.configure(state="normal" if agree.get() else "disabled"))
+
+        dialog.after(150, lambda: (dialog.grab_set(), dialog.focus_force()))
+        self.wait_window(dialog)
+        return result["ok"]
 
     def _update_token_badge(self):
         token = self.entry_token.get().strip()
@@ -1363,7 +1605,7 @@ class MediaHarvesterApp(ctk.CTk):
         def _worker():
             try:
                 from src.core.vk_diag import run_diagnostics
-                agents = {"kate": VK_MUSIC_USER_AGENT,
+                agents = {"kate": VK_MUSIC_USER_AGENT, "android_official": VK_ANDROID_USER_AGENT,
                           "android": "VKAndroidApp/8.52-17600 (Android 14; SDK 34; arm64-v8a; Samsung Galaxy S24; ru; 2960x1440)",
                           "none": ""}
                 summary, _ = run_diagnostics(token, kind, agents)
@@ -1598,6 +1840,16 @@ class MediaHarvesterApp(ctk.CTk):
             self.update_status("Остановка скачивания...", state="warning")
             return
 
+        if self._tracklist_mode:
+            tracklist_text = self.txt_tracks.get("1.0", "end")
+            count = len(parse_track_list(tracklist_text))
+            if not count:
+                self.update_status("Ошибка: вставьте список треков (по одному в строке)", state="error")
+                return
+            item = QueueItem(url=f"Список треков: {count}", label="Поиск на YouTube → MP3")
+            self._launch_download([item], False, tracklist_text)
+            return
+
         entry_text = self.entry_url.get().strip()
         runnable_in_queue = [it for it in self.queue if it.status in RUNNABLE]
 
@@ -1616,14 +1868,19 @@ class MediaHarvesterApp(ctk.CTk):
             self.update_status("Ошибка: вставьте ссылку на источник", state="error")
             return
 
+        self._launch_download(items, use_queue)
+
+    def _launch_download(self, items: list[QueueItem], use_queue: bool, tracklist: str = ""):
         # Снимок настроек из интерфейса (рабочий поток не трогает виджеты)
         opts = {
             "mode": self.combo_mode.get(),
-            "tokens": {kind: self.settings.get_vk_token(kind) for kind in ("photos", "music")},
+            "tokens": {kind: self.settings.get_vk_token(kind) for kind in ("photos", "music", "music_android")},
+            "music_client": self.settings.get("music_client", "kate"),
             "cookies_path": self.settings.cookies_path,
             "quality": self.combo_quality.get(),
             "allow_playlist": bool(self.chk_playlist.get()),
             "download_path": self.download_path,
+            "tracklist": tracklist,
         }
 
         self.cancel_event.clear()
@@ -1697,12 +1954,23 @@ class MediaHarvesterApp(ctk.CTk):
             engine = "gallery"
         elif "Фотографии" in mode:
             engine = "vk_photos"
+        elif "по списку" in mode:
+            engine = "tracklist"
         elif "Музыка" in mode:
             engine = "vk_music"
         else:
             engine = "ytdlp"
 
         download_path = opts["download_path"]
+
+        if engine == "tracklist":
+            return download_track_list(
+                text=opts["tracklist"],
+                download_path=download_path,
+                progress_callback=cb,
+                cookies_path=opts["cookies_path"],
+                cancel_event=self.cancel_event
+            )
 
         if engine == "insta":
             return download_instagram(
@@ -1731,12 +1999,14 @@ class MediaHarvesterApp(ctk.CTk):
                 cancel_event=self.cancel_event
             )
         if engine == "vk_music":
+            android = opts["music_client"] == "android"
             return download_vk_music(
-                token_raw=opts["tokens"]["music"],
+                token_raw=opts["tokens"]["music_android" if android else "music"],
                 url=target_url,
                 download_path=download_path,
                 progress_callback=cb,
-                cancel_event=self.cancel_event
+                cancel_event=self.cancel_event,
+                user_agent=VK_ANDROID_USER_AGENT if android else VK_MUSIC_USER_AGENT
             )
 
         title = download_video(
