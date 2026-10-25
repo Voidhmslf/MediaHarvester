@@ -1,5 +1,4 @@
 import errno
-import os
 import tempfile
 import threading
 import unittest

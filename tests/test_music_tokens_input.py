@@ -3,12 +3,12 @@ import os
 import sys
 import tempfile
 import unittest
-from unittest import mock
 
 from src.config import AUTH_URL_MUSIC, AUTH_URL_PHOTOS, VK_MUSIC_USER_AGENT, SettingsManager
 from src.core.vk_engine import extract_music_target
 from src.utils import clipboard
 from src.utils.errors import explain_error
+from tests.gui_helpers import GUI_AVAILABLE, AppHarness
 
 
 class MusicTargetTests(unittest.TestCase):
@@ -85,33 +85,17 @@ class ClipboardTests(unittest.TestCase):
                 clipboard.set_text(previous)
 
 
-@unittest.skipUnless(sys.platform == "win32" and not os.environ.get("MH_SKIP_GUI"), "нужен рабочий стол Windows")
+@unittest.skipUnless(GUI_AVAILABLE, "нужен рабочий стол Windows")
 class InputFieldTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls._tmp = tempfile.mkdtemp()
-        cls._env = mock.patch.dict(os.environ, {"LOCALAPPDATA": cls._tmp})
-        cls._env.start()
-        import src.ui.app as app_module
-        cls.app_module = app_module
-        cls._patches = [
-            mock.patch.object(app_module, "check_ffmpeg", lambda: (True, "7")),
-            mock.patch.object(app_module, "check_for_update",
-                              lambda: type("R", (), {"status": "current", "latest": "", "message": ""})()),
-        ]
-        for p in cls._patches:
-            p.start()
-        cls.app = app_module.MediaHarvesterApp()
-        cls.app.settings.save = lambda: None
+        cls.harness = AppHarness()
+        cls.app = cls.harness.app
         cls._saved_clip = clipboard.get_text()
-        cls.app.update()
 
     @classmethod
     def tearDownClass(cls):
-        cls.app.destroy()
-        for p in cls._patches:
-            p.stop()
-        cls._env.stop()
+        cls.harness.close()
         if cls._saved_clip:
             clipboard.set_text(cls._saved_clip)
 

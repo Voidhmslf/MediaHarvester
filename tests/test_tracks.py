@@ -1,5 +1,4 @@
 import os
-import sys
 import tempfile
 import threading
 import unittest
@@ -7,6 +6,7 @@ from unittest import mock
 
 import src.core.track_search as ts
 from src.utils.helpers import DownloadCancelledError
+from tests.gui_helpers import GUI_AVAILABLE, AppHarness
 
 
 class ParseTests(unittest.TestCase):
@@ -135,38 +135,19 @@ class DownloadListTests(unittest.TestCase):
                 self.run_list(tmp, "A — B\n", ev)
 
 
-@unittest.skipUnless(sys.platform == "win32" and not os.environ.get("MH_SKIP_GUI"), "нужен рабочий стол Windows")
+@unittest.skipUnless(GUI_AVAILABLE, "нужен рабочий стол Windows")
 class TrackModeUiTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls._tmp = tempfile.mkdtemp()
-        cls._env = mock.patch.dict(os.environ, {"LOCALAPPDATA": cls._tmp})
-        cls._env.start()
-        import src.ui.app as app_module
-        cls.m = app_module
-        cls._patches = [
-            mock.patch.object(app_module, "check_ffmpeg", lambda: (True, "7")),
-            mock.patch.object(app_module, "check_for_update",
-                              lambda: type("R", (), {"status": "current", "latest": "", "message": ""})()),
-        ]
-        for p in cls._patches:
-            p.start()
-        cls.app = app_module.MediaHarvesterApp()
-        cls.app.settings.save = lambda: None
-        cls.app.update()
+        cls.harness = AppHarness()
+        cls.app = cls.harness.app
 
     @classmethod
     def tearDownClass(cls):
-        cls.app.destroy()
-        for p in cls._patches:
-            p.stop()
-        cls._env.stop()
+        cls.harness.close()
 
     def mode(self, fragment):
-        name = next(m for m in self.m.CONTENT_MODES if fragment in m)
-        self.app.combo_mode.set(name)
-        self.app.on_mode_change(name)
-        self.app.update()
+        self.harness.select_mode(fragment)
 
     def test_switching_to_list_mode_swaps_cards(self):
         app = self.app

@@ -4,7 +4,7 @@ import socketserver
 import threading
 import unittest
 
-from src.core.vk_auth import (BLANK_PREFIX, LoginOutcome, VkAuthResult, _is_success_url, _message_shape,
+from src.core.vk_auth import (BLANK_PREFIX, _is_success_url, _message_shape,
                               _url_shape, find_auth_result, find_token_in_message, login_in_window,
                               parse_auth_url)
 

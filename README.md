@@ -27,6 +27,7 @@
 - [🧠 Умный роутер ссылок (Smart Router)](#-умный-роутер-ссылок-smart-router)
 - [🛑 Безопасная отмена загрузки](#-безопасная-отмена-загрузки)
 - [📂 Архитектура проекта](#-архитектура-проекта)
+- [🧪 Тесты](#-тесты)
 - [🚀 Быстрый старт из исходников](#-быстрый-старт-из-исходников)
 - [📦 Сборка в автономный `.exe` (PyInstaller)](#-сборка-в-автономный-exe-pyinstaller)
 - [🍪 Руководство: Экспорт Cookies](#-руководство-экспорт-cookies)
@@ -100,25 +101,66 @@ graph TD
 
 ```text
 MediaHarvester/
-├── assets/
-│   └── logo.ico                 # Иконка приложения высокого разрешения
+├── assets/logo.ico              # Иконка приложения
+├── main.py                      # Точка входа; воркеры PyInstaller (--gallery-dl-worker, --vk-login-worker)
+├── MediaHarvester.spec          # Спецификация PyInstaller (standalone .exe)
+├── requirements.txt             # Зависимости
 ├── src/
-│   ├── config.py                # Цветовая палитра Fluent, настройки, SettingsManager
-│   ├── core/
-│   │   ├── router.py            # Умный URL-роутер (Regex-анализатор ссылок)
-│   │   ├── ytdlp_engine.py      # Движок YouTube (видео до 4K, MP3 с ID3, плейлисты)
-│   │   ├── insta_engine.py      # Движок Instagram (gallery-dl + Reels fallback)
-│   │   └── vk_engine.py         # Движок VK (оригиналы фото, музыка до 1000 треков)
-│   ├── ui/
-│   │   └── app.py               # Главный интерфейс CustomTkinter (асинхронный GUI)
+│   ├── config.py                # Палитра, режимы, адреса авторизации, SettingsManager (токены фото/музыки раздельно)
+│   ├── core/                    # Логика без интерфейса
+│   │   ├── router.py            # Умный роутер ссылок: платформа, тип, движок
+│   │   ├── download_queue.py    # Очередь ссылок: разбор текста, последовательный запуск, статусы
+│   │   ├── ytdlp_engine.py      # yt-dlp: видео/аудио, плейлисты, откат на gallery-dl
+│   │   ├── gallery_engine.py    # gallery-dl: фото, галереи, ленты (Instagram, X, Pinterest, Reddit, TikTok)
+│   │   ├── insta_engine.py      # Тонкая обёртка над gallery_engine для Instagram
+│   │   ├── track_search.py      # «Треки по списку»: поиск на YouTube, выбор оригинала, MP3 с тегами
+│   │   ├── vk_engine.py         # VK: фотоальбомы (потоки, ретраи, докачка), музыка через vkpymusic
+│   │   ├── vk_auth.py           # Вход в VK: браузер + буфер обмена, встроенное окно (pywebview)
+│   │   └── vk_diag.py           # Диагностика токена VK (какие методы API отвечают)
+│   ├── ui/                      # Окно приложения, собранное из миксинов
+│   │   ├── app.py               # MediaHarvesterApp: состояние и сборка миксинов
+│   │   ├── shell.py             # Шапка, статус-бар, окно «Подробнее», переключение экранов
+│   │   ├── downloader_cards.py  # Главный экран: режим, ссылка, качество, cookies, папка
+│   │   ├── queue_panel.py       # Очередь ссылок
+│   │   ├── tracklist_panel.py   # Режим «Треки по списку»
+│   │   ├── vk_token_panel.py    # Токен VK, вход, экспериментальный клиент, проверка токена
+│   │   ├── download_runner.py   # Запуск и отмена скачивания, выбор движка
+│   │   ├── edit_keys.py         # Буфер обмена и Ctrl+V/C/X/A в любой раскладке
+│   │   ├── engine_status.py     # Проверка ffmpeg и автообновление yt-dlp при старте
+│   │   └── info_view.py         # Экран «Справка»
 │   └── utils/
-│       └── helpers.py           # Кроссплатформенный поиск FFmpeg, очистка путей, отмена
-├── main.py                      # Входная точка приложения и воркер PyInstaller
-├── MediaHarvester.spec          # Спецификация PyInstaller (сборка standalone .exe)
-├── requirements.txt             # Зависимости проекта
-├── LICENSE                      # Лицензия MIT
-└── README.md                    # Документация проекта
+│       ├── helpers.py           # FFmpeg, пути, имена файлов, папка данных приложения
+│       ├── logger.py            # Лог с ротацией и маскировкой токенов
+│       ├── errors.py            # Перевод технических ошибок в понятные сообщения
+│       ├── report.py            # Отчёт об ошибках для разработчика
+│       ├── clipboard.py         # Буфер обмена через Win32 (Tk-буфер «залипает»)
+│       └── ytdlp_updater.py     # Автообновление yt-dlp с проверкой SHA-256
+├── tests/                       # Автотесты (unittest)
+└── README.md
 ```
+
+Окно `MediaHarvesterApp` не содержит логики скачивания: каждый миксин отвечает за свою часть интерфейса, а
+движки в `src/core` ничего не знают об интерфейсе и принимают `progress_callback` и `cancel_event`.
+
+---
+
+## 🧪 Тесты
+
+```bash
+python -m unittest discover -s tests -t .
+```
+
+Тесты не ходят в сеть (сервер и yt-dlp подменяются) и не пишут в ваш профиль. GUI-тесты открывают настоящее
+окно на рабочем столе Windows и пропускаются, если задать переменную окружения `MH_SKIP_GUI=1`.
+
+| Файл | Что проверяет |
+| :--- | :--- |
+| `test_router.py` | определение платформы, типа и движка по ссылке |
+| `test_core_helpers.py` | настройки, хелперы, форматы yt-dlp, gallery-dl, обёртка Instagram |
+| `test_vk_photos.py`, `test_vk_auth.py`, `test_vk_diag.py` | фото VK (потоки, ретраи, докачка), вход, диагностика |
+| `test_tracks.py`, `test_music_tokens_input.py` | «Треки по списку», токены, ввод и горячие клавиши |
+| `test_errors.py`, `test_ytdlp_updater.py` | понятные ошибки, лог, автообновление yt-dlp |
+| `test_ui_structure.py` | состав окна, выбор движка для каждой ссылки, карточки, очередь |
 
 ---
 
