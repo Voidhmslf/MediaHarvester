@@ -5,23 +5,20 @@ import time
 import webbrowser
 import customtkinter as ctk
 from src.config import (
-    ACCENT_BLUE,
-    ACCENT_BLUE_HOVER,
     AUTH_URL_MUSIC,
     AUTH_URL_MUSIC_ANDROID,
     AUTH_URL_PHOTOS,
+    VK_ANDROID_USER_AGENT,
+    VK_MUSIC_USER_AGENT,
+)
+from src.ui import theme
+from src.ui.theme import (
     BG_MAIN,
+    PAD,
     STATUS_AMBER,
-    STATUS_GREEN,
-    STATUS_RED,
-    SURFACE_CARD_BORDER,
-    SURFACE_INNER,
-    SURFACE_INNER_BORDER,
     TEXT_MAIN,
     TEXT_MUTED,
     TEXT_SECONDARY,
-    VK_ANDROID_USER_AGENT,
-    VK_MUSIC_USER_AGENT,
 )
 from src.core.vk_engine import VKPYMUSIC_AVAILABLE, extract_token
 from src.core.vk_auth import fetch_user_name, find_auth_result, login_in_window
@@ -36,73 +33,54 @@ class VkTokenPanelMixin:
         self.card_token = self._card(self.main_scroll)
 
         hrow = ctk.CTkFrame(self.card_token, fg_color="transparent")
-        hrow.pack(fill="x", padx=14, pady=(10, 6))
-        ctk.CTkLabel(hrow, text="Токен доступа ВКонтакте",
-                     font=self.font_section,
-                     text_color=TEXT_SECONDARY).pack(side="left")
-        self.badge_token_status = ctk.CTkLabel(
-            hrow, text="Требуется",
-            font=ctk.CTkFont(family="Segoe UI", size=10),
-            fg_color=SURFACE_INNER, text_color=TEXT_MUTED,
-            corner_radius=4, padx=6, pady=2)
+        hrow.pack(fill="x", padx=PAD, pady=(14, 8))
+        ctk.CTkLabel(hrow, text="Токен доступа ВКонтакте", font=self.font_section,
+                     text_color=TEXT_MAIN).pack(side="left")
+        self.badge_token_status = self._badge(hrow, "Требуется")
         self.badge_token_status.pack(side="right")
 
         self.btn_auth = ctk.CTkButton(
-            self.card_token, text="Войти через ВКонтакте",
-            height=34, corner_radius=6, font=self.font_main,
-            fg_color=ACCENT_BLUE, hover_color=ACCENT_BLUE_HOVER,
-            text_color=TEXT_MAIN, command=self.start_browser_login)
-        self.btn_auth.pack(fill="x", padx=14, pady=(0, 4))
+            self.card_token, text="Войти через ВКонтакте", height=40, font=self.font_medium,
+            command=self.start_browser_login, **theme.primary_button())
+        self.btn_auth.pack(fill="x", padx=PAD, pady=(0, 6))
 
         self.btn_auth_window = ctk.CTkButton(
             self.card_token, text="Войти во встроенном окне (может не сработать)",
-            height=24, corner_radius=4, font=self.font_small,
-            fg_color="transparent", hover_color=SURFACE_CARD_BORDER,
-            text_color=TEXT_MUTED, command=self.start_vk_login)
-        self.btn_auth_window.pack(fill="x", padx=14, pady=(0, 4))
+            height=28, font=self.font_small, command=self.start_vk_login, **theme.ghost_button())
+        self.btn_auth_window.pack(fill="x", padx=PAD, pady=(0, 2))
 
         self.btn_token_check = ctk.CTkButton(
             self.card_token, text="Проверить токен",
-            height=24, corner_radius=4, font=self.font_small,
-            fg_color="transparent", hover_color=SURFACE_CARD_BORDER,
-            text_color=TEXT_MUTED, command=self.check_vk_token)
-        self.btn_token_check.pack(fill="x", padx=14, pady=(0, 8))
+            height=28, font=self.font_small, command=self.check_vk_token, **theme.ghost_button())
+        self.btn_token_check.pack(fill="x", padx=PAD, pady=(0, 8))
 
         self.btn_experiment = ctk.CTkButton(
             self.card_token, text="⚠ Эксперимент: войти как официальное приложение VK…",
-            height=24, corner_radius=4, font=self.font_small,
-            fg_color="transparent", hover_color=SURFACE_CARD_BORDER,
-            text_color=STATUS_AMBER, command=self.toggle_experimental_client)
+            height=28, font=self.font_small, command=self.toggle_experimental_client,
+            **theme.ghost_button(STATUS_AMBER))
         self.lbl_experiment_warning = ctk.CTkLabel(
-            self.card_token, text="", font=ctk.CTkFont(family="Segoe UI", size=10),
+            self.card_token, text="", font=self.font_caption,
             text_color=STATUS_AMBER, justify="left", wraplength=420)
 
         erow = ctk.CTkFrame(self.card_token, fg_color="transparent")
-        erow.pack(fill="x", padx=14, pady=(0, 6))
+        erow.pack(fill="x", padx=PAD, pady=(0, 8))
         self.entry_token = ctk.CTkEntry(
-            erow,
-            placeholder_text="...или вставьте ссылку/токен вручную",
-            font=self.font_main, height=34, corner_radius=6,
-            fg_color=SURFACE_INNER, border_width=1,
-            border_color=SURFACE_INNER_BORDER,
-            text_color=TEXT_MAIN, placeholder_text_color=TEXT_MUTED)
-        self.entry_token.pack(side="left", fill="x", expand=True, padx=(0, 6))
+            erow, placeholder_text="…или вставьте ссылку или токен вручную",
+            font=self.font_main, height=38, **theme.entry_style())
+        self.entry_token.pack(side="left", fill="x", expand=True, padx=(0, 8))
         self.entry_token.bind("<KeyRelease>", self._on_token_changed)
+        theme.bind_focus_ring(self.entry_token)
 
         ctk.CTkButton(
-            erow, text="Вставить", width=74, height=34, corner_radius=6,
-            font=self.font_small,
-            fg_color=SURFACE_CARD_BORDER,
-            hover_color=SURFACE_INNER_BORDER,
-            text_color=TEXT_SECONDARY,
-            command=lambda: self.paste_clipboard(self.entry_token)
+            erow, text="Вставить", width=88, height=38, font=self.font_medium,
+            command=lambda: self.paste_clipboard(self.entry_token), **theme.secondary_button()
         ).pack(side="right")
 
         self.lbl_token_hint = ctk.CTkLabel(
             self.card_token,
             text=self._TOKEN_HINT,
             font=self.font_subtitle, text_color=TEXT_MUTED, justify="left")
-        self.lbl_token_hint.pack(anchor="w", padx=14, pady=(0, 10))
+        self.lbl_token_hint.pack(anchor="w", padx=PAD, pady=(0, 14))
 
     def _set_token_kind(self, kind: str):
         """Переключает поле токена на токен для фото или для музыки (их выдают разные приложения VK)."""
@@ -145,9 +123,9 @@ class VkTokenPanelMixin:
                   "ограничения и блокировка аккаунта." if android else
                   "Эксперимент нарушает правила VK и может привести к ограничениям аккаунта (подробности — по кнопке)."))
         if not self.btn_experiment.winfo_ismapped():
-            self.btn_experiment.pack(fill="x", padx=14, pady=(0, 2), after=self.btn_token_check)
+            self.btn_experiment.pack(fill="x", padx=PAD, pady=(0, 2), after=self.btn_token_check)
         if not self.lbl_experiment_warning.winfo_ismapped():
-            self.lbl_experiment_warning.pack(anchor="w", padx=14, pady=(0, 8), after=self.btn_experiment)
+            self.lbl_experiment_warning.pack(anchor="w", padx=PAD, pady=(0, 8), after=self.btn_experiment)
         self.lbl_token_hint.configure(text=self._music_hint())
 
     def toggle_experimental_client(self):
@@ -170,7 +148,7 @@ class VkTokenPanelMixin:
         """Окно с предупреждением о рисках; продолжить можно только после явного согласия."""
         dialog = ctk.CTkToplevel(self)
         dialog.title("Эксперимент: риск для аккаунта")
-        dialog.geometry("520x400")
+        dialog.geometry("540x440")
         dialog.configure(fg_color=BG_MAIN)
         dialog.transient(self)
         result = {"ok": False}
@@ -179,9 +157,10 @@ class VkTokenPanelMixin:
                 dialog.after(250, lambda: dialog.iconbitmap(self.icon_path))
         except Exception:
             pass
+        dialog.after(300, lambda: theme.apply_titlebar(dialog))
 
         ctk.CTkLabel(dialog, text="⚠ Вход как официальное приложение VK", font=self.font_title,
-                     text_color=STATUS_AMBER).pack(anchor="w", padx=18, pady=(16, 8))
+                     text_color=STATUS_AMBER).pack(anchor="w", padx=20, pady=(18, 10))
         ctk.CTkLabel(
             dialog, justify="left", anchor="w", font=self.font_main, text_color=TEXT_SECONDARY, wraplength=480,
             text=("VK не отдаёт музыку сторонним программам. Этот вариант пробует войти от имени официального "
@@ -193,21 +172,20 @@ class VkTokenPanelMixin:
                   "Это нарушает правила VK. Используйте запасной аккаунт, а не основной. "
                   "Безопасная альтернатива без обращения к VK — режим «Треки по списку».\n\n"
                   "Авторы программы не отвечают за последствия для аккаунта.")
-        ).pack(anchor="w", padx=18)
+        ).pack(anchor="w", padx=20)
 
         agree = ctk.CTkCheckBox(dialog, text="Я понимаю риск и действую на свой страх", font=self.font_main,
-                                text_color=TEXT_MAIN, fg_color=ACCENT_BLUE, hover_color=ACCENT_BLUE_HOVER)
-        agree.pack(anchor="w", padx=18, pady=(12, 8))
+                                **dict(theme.checkbox_style(), text_color=TEXT_MAIN))
+        agree.pack(anchor="w", padx=20, pady=(14, 10))
 
         buttons = ctk.CTkFrame(dialog, fg_color="transparent")
-        buttons.pack(fill="x", padx=18, pady=(0, 14))
-        btn_go = ctk.CTkButton(buttons, text="Продолжить", height=34, corner_radius=6, font=self.font_main,
-                               fg_color=STATUS_RED, hover_color="#A83232", text_color=TEXT_MAIN, state="disabled",
-                               command=lambda: (result.update(ok=True), dialog.destroy()))
+        buttons.pack(fill="x", padx=20, pady=(0, 16))
+        btn_go = ctk.CTkButton(buttons, text="Продолжить", height=38, font=self.font_medium, state="disabled",
+                               command=lambda: (result.update(ok=True), dialog.destroy()),
+                               **theme.danger_button())
         btn_go.pack(side="right")
-        ctk.CTkButton(buttons, text="Отмена", height=34, corner_radius=6, font=self.font_main,
-                      fg_color=SURFACE_CARD_BORDER, hover_color=SURFACE_INNER_BORDER, text_color=TEXT_SECONDARY,
-                      command=dialog.destroy).pack(side="right", padx=(0, 8))
+        ctk.CTkButton(buttons, text="Отмена", height=38, font=self.font_medium,
+                      command=dialog.destroy, **theme.secondary_button()).pack(side="right", padx=(0, 8))
         agree.configure(command=lambda: btn_go.configure(state="normal" if agree.get() else "disabled"))
 
         dialog.after(150, lambda: (dialog.grab_set(), dialog.focus_force()))
@@ -219,14 +197,11 @@ class VkTokenPanelMixin:
         mode = self.combo_mode.get()
 
         if "Музыка" in mode and not VKPYMUSIC_AVAILABLE:
-            self.badge_token_status.configure(
-                text="Недоступно", text_color=STATUS_RED, fg_color=SURFACE_INNER)
+            self.badge_token_status.configure(text="Недоступно", **theme.badge_style("bad"))
         elif token:
-            self.badge_token_status.configure(
-                text="Сохранён", text_color=STATUS_GREEN, fg_color=SURFACE_INNER)
+            self.badge_token_status.configure(text="Сохранён", **theme.badge_style("ok"))
         else:
-            self.badge_token_status.configure(
-                text="Требуется", text_color=STATUS_AMBER, fg_color=SURFACE_INNER)
+            self.badge_token_status.configure(text="Требуется", **theme.badge_style("warn"))
 
     def _on_token_changed(self, event=None):
         raw = self.entry_token.get().strip()

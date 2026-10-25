@@ -205,7 +205,7 @@ class MainWindowTests(unittest.TestCase):
         self.assertFalse(app.card_queue.winfo_ismapped())
 
     def test_engine_info_line_colors(self):
-        from src.config import STATUS_AMBER, STATUS_RED, TEXT_MUTED
+        from src.ui.theme import STATUS_AMBER, STATUS_RED, TEXT_MUTED
         app = self.app
         app._engine_state.update(ytdlp="2026.10.21", ffmpeg=(True, "7.1"), update="")
         app._render_engine_info()

@@ -1,5 +1,9 @@
 """Проверки при старте (ffmpeg, обновление yt-dlp) и строка версий в шапке."""
-from src.config import STATUS_AMBER, STATUS_RED, TEXT_MUTED
+from src.ui.theme import (
+    STATUS_AMBER,
+    STATUS_RED,
+    TEXT_MUTED,
+)
 from src.utils.helpers import check_ffmpeg
 from src.utils.ytdlp_updater import check_for_update, current_version as ytdlp_version
 
@@ -54,7 +58,12 @@ class EngineStatusMixin:
             parts.append(f"ffmpeg {info}" if ok else f"ffmpeg: {info}")
             if not ok:
                 color = STATUS_RED
-        self.lbl_engine_info.configure(text=" • ".join(parts), text_color=color)
+        text = " • ".join(parts)
+        self.lbl_engine_info.configure(text=text, text_color=color)
+        if text:
+            self.lbl_engine_info.pack(fill="x")
+        else:
+            self.lbl_engine_info.pack_forget()  # пустая строка отнимала бы место под подзаголовком
 
     def _on_auto_update_toggled(self):
         self.settings.set("auto_update_ytdlp", bool(self.chk_auto_update.get()))

@@ -35,7 +35,11 @@ os.makedirs(os.path.dirname(_version_file), exist_ok=True)
 with open(_version_file, 'w', encoding='utf-8') as _f:
     _f.write(str(_version_info))
 
-datas = [('assets/logo.ico', 'assets')]
+datas = [
+    ('assets/logo.ico', 'assets'),
+    ('assets/fonts', 'assets/fonts'),
+    ('assets/brand', 'assets/brand'),
+]
 binaries = []
 hiddenimports = [
     'gallery_dl',

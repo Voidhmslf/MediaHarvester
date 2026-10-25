@@ -4,11 +4,11 @@ import threading
 import customtkinter as ctk
 from src.config import (
     AUTH_URL_PHOTOS,
-    BG_MAIN,
     CONTENT_MODES,
     SettingsManager,
 )
-from PIL import Image
+from src.ui import theme
+from src.ui.theme import BG_MAIN
 from src.core.download_queue import QueueItem
 from src.utils.helpers import get_resource_path
 from src.utils.logger import register_secret, setup_logging
@@ -23,7 +23,6 @@ from src.version import APP_NAME, __version__
 from src.ui.download_runner import DownloadRunnerMixin
 from src.ui.engine_status import EngineStatusMixin
 
-ctk.set_appearance_mode("dark")
 ctk.set_default_color_theme("blue")
 
 
@@ -31,17 +30,22 @@ class MediaHarvesterApp(EditKeysMixin, ShellMixin, InfoViewMixin, DownloaderCard
     """Окно приложения. Логика разнесена по миксинам; здесь — инициализация состояния и сборка интерфейса."""
 
     def __init__(self):
+        # Тема должна быть выбрана до создания окна и виджетов, иначе окно мигнёт чужим цветом
+        theme.apply_theme(SettingsManager().get("theme", "system"))
         super().__init__()
 
         setup_logging()
         self.settings = SettingsManager()
+        self.theme_choice: str = theme.normalize_theme(self.settings.get("theme", "system"))
         for kind in ("photos", "music"):
             register_secret(self.settings.get_vk_token(kind))
         self.cancel_event = threading.Event()
 
         self.title(f"{APP_NAME} {__version__}")
-        self.geometry("540x780")
-        self.minsize(460, 600)
+        # Высота — под рабочую область экрана: иначе на ноутбуках нижняя часть окна уходила бы под панель задач
+        height = theme.fit_window_height(self, preferred=820, minimum=540)
+        self.geometry(theme.centered_geometry(self, 580, height))
+        self.minsize(500, min(640, height))
         self.configure(fg_color=BG_MAIN)
 
         # Иконка окна
@@ -52,26 +56,21 @@ class MediaHarvesterApp(EditKeysMixin, ShellMixin, InfoViewMixin, DownloaderCard
         except Exception:
             pass
 
-        # Логотип в заголовок через PIL
-        self.logo_image = None
-        try:
-            if os.path.exists(self.icon_path):
-                with Image.open(self.icon_path) as source:
-                    pil_img = source.resize((24, 24), Image.Resampling.LANCZOS)
-                self.logo_image = ctk.CTkImage(
-                    light_image=pil_img, dark_image=pil_img, size=(24, 24)
-                )
-        except Exception:
-            pass
+        # Логотип (знак + надпись) для шапки и иконка переключателя темы
+        self.logo_image = theme.lockup_image(32)
+        self.icon_theme = theme.theme_toggle_icon(18)
 
-        # Шрифты — Segoe UI
-        self.font_title    = ctk.CTkFont(family="Segoe UI", size=15, weight="bold")
-        self.font_subtitle = ctk.CTkFont(family="Segoe UI", size=11)
-        self.font_section  = ctk.CTkFont(family="Segoe UI", size=11, weight="bold")
-        self.font_main     = ctk.CTkFont(family="Segoe UI", size=12)
-        self.font_bold     = ctk.CTkFont(family="Segoe UI", size=12, weight="bold")
-        self.font_small    = ctk.CTkFont(family="Segoe UI", size=11)
-        self.font_mono     = ctk.CTkFont(family="Consolas", size=11)
+        # Шрифты бренда (Inter из assets/fonts; без него — системный Segoe UI)
+        fonts = theme.build_fonts()
+        self.font_title    = fonts.title
+        self.font_section  = fonts.section
+        self.font_main     = fonts.main
+        self.font_medium   = fonts.medium
+        self.font_bold     = fonts.bold
+        self.font_small    = fonts.small
+        self.font_subtitle = fonts.small
+        self.font_caption  = fonts.caption
+        self.font_mono     = fonts.mono
 
         # Состояние приложения
         self.download_path: str = self.settings.download_path
@@ -91,11 +90,13 @@ class MediaHarvesterApp(EditKeysMixin, ShellMixin, InfoViewMixin, DownloaderCard
         self._clipboard_watch_until: float = 0.0
 
         # Построение интерфейса
+        # Порядок важен для pack: сначала то, что прижато к низу (статус-бар, кнопка), потом растягиваемая область
         self.create_header()
+        self.create_statusbar()
+        self.create_action_bar()
         self.create_views_container()
         self.create_downloader_view()
         self.create_info_view()
-        self.create_statusbar()
 
         self.setup_keybindings()
         self.setup_adaptive_resizing()
@@ -116,6 +117,8 @@ class MediaHarvesterApp(EditKeysMixin, ShellMixin, InfoViewMixin, DownloaderCard
         self.combo_mode.set(CONTENT_MODES[0])  # "Автоопределение (Smart)" по умолчанию
         self.on_mode_change(CONTENT_MODES[0])
         self._update_token_badge()
+
+        self.after(300, lambda: theme.apply_titlebar(self))
 
         # Проверки окружения (ffmpeg, обновление yt-dlp) — в фоне, чтобы не задерживать запуск
         self.after(800, lambda: threading.Thread(

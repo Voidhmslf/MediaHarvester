@@ -1,11 +1,14 @@
 """Запуск, ход и отмена скачивания; выбор движка для ссылки."""
 import threading
 from src.config import (
-    ACCENT_BLUE,
-    ACCENT_BLUE_HOVER,
-    STATUS_RED,
     VK_ANDROID_USER_AGENT,
     VK_MUSIC_USER_AGENT,
+)
+from src.ui.theme import (
+    ACCENT,
+    ACCENT_HOVER,
+    DANGER,
+    DANGER_HOVER,
 )
 from src.core.download_queue import (
     DONE,
@@ -34,15 +37,15 @@ class DownloadRunnerMixin:
             self.btn_download.configure(
                 state="normal",
                 text="Остановить скачивание",
-                fg_color=STATUS_RED,
-                hover_color="#A83232"
+                fg_color=DANGER,
+                hover_color=DANGER_HOVER
             )
         else:
             self.btn_download.configure(
                 state="normal",
                 text="Начать скачивание",
-                fg_color=ACCENT_BLUE,
-                hover_color=ACCENT_BLUE_HOVER
+                fg_color=ACCENT,
+                hover_color=ACCENT_HOVER
             )
 
         self.combo_mode.configure(state=state)

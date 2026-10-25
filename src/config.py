@@ -5,27 +5,6 @@ from typing import Any
 
 from src.utils.helpers import get_app_data_dir
 
-# ─────────────────────────────────────────
-# ЦВЕТОВАЯ ПАЛИТРА (Fluent / Windows 11 Dark)
-# ─────────────────────────────────────────
-BG_MAIN             = "#202020"
-SURFACE_CARD        = "#2B2B2B"
-SURFACE_CARD_BORDER = "#3A3A3A"
-SURFACE_INNER       = "#1A1A1A"
-SURFACE_INNER_BORDER = "#404040"
-
-ACCENT_BLUE         = "#0078D4"
-ACCENT_BLUE_HOVER   = "#006CBE"
-
-# Статусные цвета — только в статус-баре
-STATUS_GREEN = "#3DB06B"
-STATUS_RED   = "#C84242"
-STATUS_AMBER = "#C48F1A"
-
-TEXT_MAIN      = "#FFFFFF"
-TEXT_SECONDARY = "#AAAAAA"
-TEXT_MUTED     = "#707070"
-
 # Scope-конфиги OAuth для каждого режима
 AUTH_URL_PHOTOS = (
     "https://oauth.vk.com/authorize?client_id=7497650"

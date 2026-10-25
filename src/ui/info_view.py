@@ -1,15 +1,18 @@
 """Экран «Справка»."""
 from src.version import __version__
 import customtkinter as ctk
-from src.config import (
-    ACCENT_BLUE,
-    ACCENT_BLUE_HOVER,
+from src.ui import theme
+from src.ui.theme import (
+    BTN_SECONDARY,
+    BTN_SECONDARY_HOVER,
+    PAD,
+    R_CARD,
     SURFACE_CARD,
     SURFACE_CARD_BORDER,
     TEXT_MAIN,
-    TEXT_MUTED,
     TEXT_SECONDARY,
 )
+
 
 
 class InfoViewMixin:
@@ -18,23 +21,22 @@ class InfoViewMixin:
     # ──────────────────────────────────────────────────────
     def create_info_view(self):
         self.info_scroll = ctk.CTkScrollableFrame(
-            self.views_container, fg_color="transparent",
-            scrollbar_button_color=SURFACE_CARD_BORDER,
-            scrollbar_button_hover_color=TEXT_MUTED)
+            self.views_container, fg_color="transparent", **theme.scrollbar_style())
         self.info_labels = []
 
-        hcard = self._info_card(pady=(0, 10))
-        hrow = ctk.CTkFrame(hcard, fg_color="transparent")
-        hrow.pack(fill="x", padx=14, pady=12)
-        ctk.CTkLabel(hrow, text=f"Руководство MediaHarvester {__version__}",
-                     font=self.font_title,
-                     text_color=TEXT_MAIN).pack(side="left")
-        ctk.CTkButton(
-            hrow, text="Назад", width=74, height=30, corner_radius=6,
-            font=self.font_small,
-            fg_color=ACCENT_BLUE, hover_color=ACCENT_BLUE_HOVER,
-            text_color=TEXT_MAIN,
-            command=self.show_downloader_view).pack(side="right")
+        hcard = self._info_card(pady=(0, theme.CARD_GAP))
+        ctk.CTkLabel(hcard, text=f"Руководство MediaHarvester {__version__}", font=self.font_title,
+                     text_color=TEXT_MAIN).pack(anchor="w", padx=PAD, pady=(16, 4))
+        ctk.CTkLabel(hcard, text="Оформление", font=self.font_section,
+                     text_color=TEXT_SECONDARY).pack(anchor="w", padx=PAD, pady=(10, 6))
+        self.seg_theme = ctk.CTkSegmentedButton(
+            hcard, values=list(theme.THEME_LABELS.values()), font=self.font_medium, height=34,
+            command=self._on_theme_segment, corner_radius=theme.R_CTRL,
+            fg_color=BTN_SECONDARY, unselected_color=BTN_SECONDARY, unselected_hover_color=BTN_SECONDARY_HOVER,
+            selected_color=("#FFFFFF", "#46464D"), selected_hover_color=("#FFFFFF", "#46464D"),
+            text_color=TEXT_MAIN, border_width=3)
+        self.seg_theme.pack(fill="x", padx=PAD, pady=(0, 16))
+        self.seg_theme.set(theme.THEME_LABELS[self.theme_choice])
 
         self._info_section(
             "1. Умное автоопределение (Smart Mode)",
@@ -124,16 +126,18 @@ class InfoViewMixin:
             "В полях ввода работают Ctrl+C, Ctrl+V, Ctrl+X, Ctrl+A в любой раскладке и меню по правой кнопке.")
 
         ctk.CTkButton(
-            self.info_scroll, text="Вернуться к скачиванию", height=42,
-            corner_radius=6, font=self.font_bold,
-            fg_color=ACCENT_BLUE, hover_color=ACCENT_BLUE_HOVER,
-            text_color=TEXT_MAIN,
-            command=self.show_downloader_view
-        ).pack(fill="x", padx=2, pady=(6, 12))
+            self.info_scroll, text="Вернуться к скачиванию", height=50, font=self.font_bold,
+            command=self.show_downloader_view,
+            **dict(theme.primary_button(), corner_radius=12)
+        ).pack(fill="x", padx=2, pady=(2, 14))
 
-    def _info_card(self, pady=(0, 10)):
+    def _on_theme_segment(self, label: str):
+        choice = next((key for key, text in theme.THEME_LABELS.items() if text == label), "system")
+        self.set_theme(choice)
+
+    def _info_card(self, pady=(0, theme.CARD_GAP)):
         f = ctk.CTkFrame(self.info_scroll, fg_color=SURFACE_CARD,
-                         corner_radius=6, border_width=1,
+                         corner_radius=R_CARD, border_width=1,
                          border_color=SURFACE_CARD_BORDER)
         f.pack(fill="x", padx=2, pady=pady)
         return f
@@ -141,9 +145,8 @@ class InfoViewMixin:
     def _info_section(self, title: str, body: str):
         card = self._info_card()
         ctk.CTkLabel(card, text=title, font=self.font_section,
-                     text_color=TEXT_SECONDARY).pack(
-            anchor="w", padx=14, pady=(12, 5))
+                     text_color=TEXT_MAIN).pack(anchor="w", padx=PAD, pady=(14, 6))
         lbl = ctk.CTkLabel(card, text=body, font=self.font_main,
-                            text_color=TEXT_MUTED, justify="left")
-        lbl.pack(anchor="w", padx=14, pady=(0, 12))
+                           text_color=TEXT_SECONDARY, justify="left")
+        lbl.pack(anchor="w", padx=PAD, pady=(0, 14))
         self.info_labels.append(lbl)

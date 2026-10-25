@@ -1,7 +1,7 @@
 # 🌾 MediaHarvester
 
 <p align="center">
-  <img src="assets/logo.ico" width="96" height="96" alt="MediaHarvester Logo">
+  <img src="assets/brand/mediaharvester-lockup-128h.png" height="72" alt="MediaHarvester">
 </p>
 
 <p align="center">
@@ -11,11 +11,18 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/Voidhmslf/MediaHarvester/releases"><img src="https://img.shields.io/badge/Release-v1.1.0-0078D4?style=for-the-badge&logo=github" alt="Release v1.1.0"></a>
+  <a href="https://github.com/Voidhmslf/MediaHarvester/releases"><img src="https://img.shields.io/badge/Release-v1.2.0-D9480F?style=for-the-badge&logo=github" alt="Release v1.2.0"></a>
   <a href="https://www.python.org/downloads/"><img src="https://img.shields.io/badge/Python-3.11+-3776AB?style=for-the-badge&logo=python&logoColor=white" alt="Python 3.11+"></a>
   <a href="https://github.com/TomSchimansky/CustomTkinter"><img src="https://img.shields.io/badge/UI-CustomTkinter-2B2B2B?style=for-the-badge" alt="CustomTkinter"></a>
+  <img src="https://img.shields.io/badge/Theme-light%20%2F%20dark-1A1A1A?style=for-the-badge" alt="Светлая и тёмная тема">
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-2ea44f?style=for-the-badge" alt="MIT License"></a>
   <img src="https://img.shields.io/badge/Platform-Windows-blue?style=for-the-badge" alt="Platform">
+</p>
+
+<p align="center">
+  <img src="docs/screenshot-dark.png" width="360" alt="Тёмная тема">
+  &nbsp;&nbsp;
+  <img src="docs/screenshot-light.png" width="360" alt="Светлая тема">
 </p>
 
 ---
@@ -53,7 +60,7 @@
 - **Треки по списку:** вставьте список «Исполнитель — Название», и приложение найдёт и скачает каждый трек в MP3 с тегами, не обращаясь к VK.
 - **Само обновляется там, где ломается чаще всего:** yt-dlp обновляется автоматически (с проверкой SHA-256), при старте проверяется ffmpeg.
 - **Понятные ошибки:** вместо трассировок короткая причина и подсказка, кнопка «Подробнее» с отчётом для разработчика; лог с маскировкой токенов.
-- **Тёмный интерфейс в стиле Windows 11** на `CustomTkinter` с адаптивной сеткой.
+- **Светлая и тёмная тема:** кнопка в шапке переключает оформление на лету, выбор запоминается (в «Справке» есть вариант «Как в системе»). Фирменные цвета и шрифт Inter, главная кнопка закреплена внизу окна.
 - **Автономный FFmpeg**, безопасная отмена загрузки и защита воркеров PyInstaller от «fork-бомбы».
 - **Настройки хранятся локально** в `%LOCALAPPDATA%\MediaHarvester\settings.json` (в открытом виде; токены не шифруются, не передавайте этот файл другим).
 
@@ -143,12 +150,17 @@ graph TD
 
 ```text
 MediaHarvester/
-├── assets/logo.ico              # Иконка приложения
+├── assets/
+│   ├── logo.ico                 # Иконка окна и .exe (из брендбука)
+│   ├── brand/                   # Логотип для шапки приложения и README
+│   └── fonts/                   # Inter (Regular, Medium, SemiBold, Bold) и его лицензия OFL
+├── MediaHarvester-brand/        # Брендбук: логотипы, иконки для всех платформ, цветовые токены
+├── docs/                        # Скриншоты для README
 ├── main.py                      # Точка входа; воркеры PyInstaller (--gallery-dl-worker, --vk-login-worker)
 ├── MediaHarvester.spec          # Спецификация PyInstaller (standalone .exe)
 ├── requirements.txt             # Зависимости
 ├── src/
-│   ├── config.py                # Палитра, режимы, адреса авторизации, SettingsManager (токены фото/музыки раздельно)
+│   ├── config.py                # Режимы, адреса авторизации, SettingsManager (токены фото/музыки раздельно)
 │   ├── core/                    # Логика без интерфейса
 │   │   ├── router.py            # Умный роутер ссылок: платформа, тип, движок
 │   │   ├── download_queue.py    # Очередь ссылок: разбор текста, последовательный запуск, статусы
@@ -161,7 +173,8 @@ MediaHarvester/
 │   │   └── vk_diag.py           # Диагностика токена VK (какие методы API отвечают)
 │   ├── ui/                      # Окно приложения, собранное из миксинов
 │   │   ├── app.py               # MediaHarvesterApp: состояние и сборка миксинов
-│   │   ├── shell.py             # Шапка, статус-бар, окно «Подробнее», переключение экранов
+│   │   ├── theme.py             # Палитра светлой и тёмной тем, шрифты Inter, готовые стили виджетов
+│   │   ├── shell.py             # Шапка, статус-бар, окно «Подробнее», переключение экранов и тем
 │   │   ├── downloader_cards.py  # Главный экран: режим, ссылка, качество, cookies, папка
 │   │   ├── queue_panel.py       # Очередь ссылок
 │   │   ├── tracklist_panel.py   # Режим «Треки по списку»
@@ -203,6 +216,7 @@ python -m unittest discover -s tests -t .
 | `test_tracks.py`, `test_music_tokens_input.py` | «Треки по списку», токены, ввод и горячие клавиши |
 | `test_errors.py`, `test_ytdlp_updater.py` | понятные ошибки, лог, автообновление yt-dlp |
 | `test_ui_structure.py` | состав окна, выбор движка для каждой ссылки, карточки, очередь |
+| `test_theme.py` | палитра (контраст текста в обеих темах), переключение темы, шрифты и бренд-ресурсы |
 
 ---
 
@@ -345,7 +359,7 @@ VK закрыл музыкальные методы API для сторонни�
 - [x] Автообновление yt-dlp, понятные ошибки и лог.
 - [ ] Режим «без перекодирования» для музыки (m4a/opus вместо MP3).
 - [ ] Параллельная загрузка нескольких ссылок из очереди.
-- [ ] Светлая тема оформления.
+- [x] Светлая и тёмная тема, фирменный стиль.
 - [ ] Проверка работы на Linux и macOS.
 
 ---
@@ -364,6 +378,8 @@ VK закрыл музыкальные методы API для сторонни�
 ## 📜 Лицензия
 
 Проект распространяется под свободной лицензией **MIT**. Подробности в файле [LICENSE](LICENSE).
+
+Шрифт [Inter](https://rsms.me/inter/) (© The Inter Project Authors) входит в сборку по лицензии SIL Open Font License 1.1, текст лежит в `assets/fonts/Inter-LICENSE.txt`.
 
 <p align="center">
   Сделано с ❤️ для удобной и быстрой работы с медиа.

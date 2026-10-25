@@ -1,6 +1,12 @@
 """Буфер обмена и горячие клавиши полей ввода (в любой раскладке), контекстное меню."""
 import tkinter as tk
-from src.config import ACCENT_BLUE, SURFACE_CARD, TEXT_MAIN
+from src.ui.theme import (
+    ACCENT,
+    SURFACE_CARD,
+    TEXT_MAIN,
+    TEXT_ON_ACCENT,
+    resolve,
+)
 from src.core.router import detect_url_type
 from src.core.vk_engine import extract_token
 from src.core.download_queue import parse_urls
@@ -43,8 +49,10 @@ class EditKeysMixin:
     def _show_entry_menu(self, event, entry):
         """Контекстное меню поля ввода (правая кнопка мыши)."""
         entry.focus_set()
-        menu = tk.Menu(self, tearoff=0, bg=SURFACE_CARD, fg=TEXT_MAIN, activebackground=ACCENT_BLUE,
-                       activeforeground=TEXT_MAIN, bd=0)
+        # Чистый tk-виджет не понимает пары цветов — берём цвет текущей темы
+        menu = tk.Menu(self, tearoff=0, bg=resolve(SURFACE_CARD), fg=resolve(TEXT_MAIN),
+                       activebackground=resolve(ACCENT), activeforeground=resolve(TEXT_ON_ACCENT),
+                       font=self.font_small, bd=0)
         menu.add_command(label="Вырезать", command=lambda: self._copy_from_entry(entry, cut=True))
         menu.add_command(label="Копировать", command=lambda: self._copy_from_entry(entry, cut=False))
         menu.add_command(label="Вставить", command=lambda: self.paste_clipboard(entry))
