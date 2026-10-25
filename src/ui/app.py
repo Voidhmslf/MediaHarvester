@@ -19,6 +19,7 @@ from src.ui.downloader_cards import DownloaderCardsMixin
 from src.ui.queue_panel import QueuePanelMixin
 from src.ui.tracklist_panel import TracklistPanelMixin
 from src.ui.vk_token_panel import VkTokenPanelMixin
+from src.version import APP_NAME, __version__
 from src.ui.download_runner import DownloadRunnerMixin
 from src.ui.engine_status import EngineStatusMixin
 
@@ -38,7 +39,7 @@ class MediaHarvesterApp(EditKeysMixin, ShellMixin, InfoViewMixin, DownloaderCard
             register_secret(self.settings.get_vk_token(kind))
         self.cancel_event = threading.Event()
 
-        self.title("MediaHarvester")
+        self.title(f"{APP_NAME} {__version__}")
         self.geometry("540x780")
         self.minsize(460, 600)
         self.configure(fg_color=BG_MAIN)

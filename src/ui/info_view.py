@@ -1,4 +1,5 @@
 """Экран «Справка»."""
+from src.version import __version__
 import customtkinter as ctk
 from src.config import (
     ACCENT_BLUE,
@@ -25,7 +26,7 @@ class InfoViewMixin:
         hcard = self._info_card(pady=(0, 10))
         hrow = ctk.CTkFrame(hcard, fg_color="transparent")
         hrow.pack(fill="x", padx=14, pady=12)
-        ctk.CTkLabel(hrow, text="Руководство MediaHarvester",
+        ctk.CTkLabel(hrow, text=f"Руководство MediaHarvester {__version__}",
                      font=self.font_title,
                      text_color=TEXT_MAIN).pack(side="left")
         ctk.CTkButton(

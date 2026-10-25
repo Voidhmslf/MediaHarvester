@@ -89,8 +89,9 @@ def setup_logging() -> logging.Logger:
     threading.excepthook = _thread_hook
 
     _configured = True
-    logger.info("=== Запуск MediaHarvester | Python %s | %s | frozen=%s ===",
-                platform.python_version(), platform.platform(),
+    from src.version import __version__
+    logger.info("=== Запуск MediaHarvester %s | Python %s | %s | frozen=%s ===",
+                __version__, platform.python_version(), platform.platform(),
                 getattr(sys, "frozen", False))
     return logger
 
