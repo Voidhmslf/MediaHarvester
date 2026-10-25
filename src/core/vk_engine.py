@@ -2,7 +2,6 @@ import os
 import re
 import shutil
 import threading
-import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Callable, Any
 from urllib.parse import urlparse
@@ -12,6 +11,7 @@ import vk_api
 import vk_api.exceptions
 
 from src.config import VK_MUSIC_USER_AGENT
+from src.core.http_download import download_photo_file
 from src.utils.helpers import sanitize_filename, DownloadCancelledError
 from src.utils.logger import get_logger
 
@@ -32,9 +32,7 @@ TYPE_ORDER = ['w', 'z', 'y', 'x', 'r', 'q', 'p', 'm', 's']
 TYPE_PRIORITY = {t: len(TYPE_ORDER) - i for i, t in enumerate(TYPE_ORDER)}
 
 PHOTO_WORKERS = 8
-PHOTO_RETRIES = 3
 PHOTO_VARIANTS = 16                   # сколько вариантов размера пробуем (в ссылке их около 14), если крупный недоступен
-PERMANENT_HTTP_STATUSES = (403, 404, 410)  # повторять тот же адрес бессмысленно: сразу следующий размер
 PHOTO_EXTENSIONS = ("jpg", "jpeg", "png", "webp", "gif")
 FAILED_REPORT_NAME = "_failed.txt"
 
@@ -138,84 +136,6 @@ def existing_photo_ids(folder: str) -> set[str]:
         if m and os.path.getsize(os.path.join(folder, name)) > 0:
             ids.add(m.group(1))
     return ids
-
-
-def _download_one_url(
-    session: requests.Session,
-    url: str,
-    out_path: str,
-    cancel_event: threading.Event | None,
-) -> None:
-    """
-    Скачивает один адрес во временный .part и атомарно переименовывает по завершении.
-    Временные сбои повторяет до PHOTO_RETRIES раз с нарастающей паузой; ответы 403/404/410
-    считает окончательными (повтор не поможет) и сразу бросает ошибку. Проверяет полноту по Content-Length.
-    """
-    part_path = out_path + ".part"
-    last_error: Exception | None = None
-    for attempt in range(PHOTO_RETRIES):
-        if cancel_event and cancel_event.is_set():
-            raise DownloadCancelledError("Загрузка отменена пользователем")
-        try:
-            with session.get(url, stream=True, timeout=(10, 30)) as r:
-                r.raise_for_status()
-                expected = int(r.headers.get("Content-Length") or 0)
-                written = 0
-                with open(part_path, "wb") as f:
-                    for chunk in r.iter_content(chunk_size=64 * 1024):
-                        if cancel_event and cancel_event.is_set():
-                            raise DownloadCancelledError("Загрузка отменена пользователем")
-                        f.write(chunk)
-                        written += len(chunk)
-            if written == 0 or (expected and written != expected):
-                raise IOError(f"Файл скачан не полностью ({written} из {expected} байт)")
-            os.replace(part_path, out_path)
-            return
-        except DownloadCancelledError:
-            raise
-        except requests.exceptions.HTTPError as e:
-            last_error = e
-            status = e.response.status_code if e.response is not None else None
-            if status in PERMANENT_HTTP_STATUSES:
-                raise
-            if attempt < PHOTO_RETRIES - 1:
-                time.sleep(1.5 * (attempt + 1))
-        except Exception as e:
-            last_error = e
-            if attempt < PHOTO_RETRIES - 1:
-                time.sleep(1.5 * (attempt + 1))
-        finally:
-            if os.path.exists(part_path):
-                try:
-                    os.remove(part_path)
-                except OSError:
-                    pass
-    raise last_error if last_error else RuntimeError("Неизвестная ошибка загрузки")
-
-
-def download_photo_file(
-    session: requests.Session,
-    url: str | list[str],
-    out_path: str,
-    cancel_event: threading.Event | None = None
-) -> None:
-    """
-    Скачивает фото по одному адресу или по списку вариантов (от крупного к мелкому): если крупный вариант
-    недоступен (например, 404), пробует следующий. Ошибка бросается, только когда не сработал ни один.
-    """
-    candidates = [url] if isinstance(url, str) else list(url)
-    last_error: Exception | None = None
-    for index, candidate in enumerate(candidates):
-        try:
-            _download_one_url(session, candidate, out_path, cancel_event)
-            if index:
-                log.info("Фото %s: крупный вариант недоступен, скачан вариант №%s", os.path.basename(out_path), index + 1)
-            return
-        except DownloadCancelledError:
-            raise
-        except Exception as e:
-            last_error = e
-    raise last_error if last_error else RuntimeError("Нет адресов для скачивания")
 
 
 def download_vk_photos(

@@ -200,7 +200,7 @@ class GalleryEngineTests(unittest.TestCase):
                                  stderr="[instagram][error] HTTP redirect to login page", returncode=4)
             text = str(ctx.exception)
             self.assertIn("Требуется авторизация X", text)
-            self.assertIn("даже для публичных", text)
+            self.assertNotIn("анонимные", text)  # пометка про Instagram — только для Instagram
 
     def test_unreadable_browser_cookies_message(self):
         with tempfile.TemporaryDirectory() as tmp:

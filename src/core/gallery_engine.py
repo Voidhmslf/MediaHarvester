@@ -167,8 +167,9 @@ def download_gallery(
                            "или выберите Firefox либо файл cookies.txt")
     if any(k in out_lower for k in ("login required", "401", "unauthorized", "checkpoint", "redirected to login",
                                     "redirect to login", "private")):
+        extra = " (Instagram ограничивает анонимные запросы: попробуйте позже)" if platform_name == "Instagram" else ""
         raise RuntimeError(f"Требуется авторизация {platform_name}: укажите cookies.txt или выберите браузер "
-                           "в блоке Cookies. Instagram требует вход даже для публичных постов и каруселей")
+                           f"в блоке Cookies{extra}")
 
     if any(k in out_lower for k in ("429", "too many requests", "rate limit")):
         raise RuntimeError(f"{platform_name} временно ограничил запросы (429). Укажите cookies.txt в настройках")

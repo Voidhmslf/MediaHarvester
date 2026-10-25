@@ -6,6 +6,7 @@ import threading
 import unittest
 from unittest import mock
 
+import src.core.http_download as hd
 import src.core.vk_engine as ve
 
 hits: dict[str, int] = {}
@@ -70,7 +71,7 @@ class DownloadTests(unittest.TestCase):
 
     def setUp(self):
         hits.clear()
-        patcher = mock.patch.object(ve.time, "sleep", lambda s: None)
+        patcher = mock.patch.object(hd.time, "sleep", lambda s: None)
         patcher.start()
         self.addCleanup(patcher.stop)
 

@@ -170,17 +170,28 @@ def download_video(
         # Instagram переключаем только при явном «нет видео»; для остальных — при любой не-авторизационной ошибке
         if platform and (no_video if platform == "Instagram" else not auth_error):
             progress_callback(f"Это не видео {platform}. Переключение на движок галереи...", "working", None, "")
-            from src.core.gallery_engine import download_gallery
-            download_gallery(
-                url=url,
-                download_path=download_path,
-                platform_name=platform,
-                cookies_path=cookies_path,
-                cookies_browser=cookies_browser,
-                status_callback=progress_callback,
-                cancel_event=cancel_event,
-                ytdlp_fallback=False,  # иначе gallery-dl вернёт нас сюда же
-            )
+            if platform == "Instagram":
+                from src.core.insta_engine import download_instagram
+                download_instagram(
+                    url=url,
+                    download_path=download_path,
+                    cookies_path=cookies_path,
+                    cookies_browser=cookies_browser,
+                    status_callback=progress_callback,
+                    cancel_event=cancel_event,
+                )
+            else:
+                from src.core.gallery_engine import download_gallery
+                download_gallery(
+                    url=url,
+                    download_path=download_path,
+                    platform_name=platform,
+                    cookies_path=cookies_path,
+                    cookies_browser=cookies_browser,
+                    status_callback=progress_callback,
+                    cancel_event=cancel_event,
+                    ytdlp_fallback=False,  # иначе gallery-dl вернёт нас сюда же
+                )
             return f"{platform} Photo / Gallery"
 
         # Человекочитаемое объяснение строится выше по стеку (utils.errors.explain_error)
