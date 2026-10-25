@@ -61,6 +61,11 @@ class ExplainTests(unittest.TestCase):
         info = explain_error(RuntimeError("Instagram временно ограничил запросы (429). Укажите cookies.txt"))
         self.assertIn("Instagram", info.message)
 
+    def test_browser_cookie_problems_are_explained(self):
+        info = explain_error(RuntimeError("Could not copy Chrome cookie database"))
+        self.assertEqual(info.kind, "browser_cookies")
+        self.assertIn("Firefox", info.hint)
+
     def test_unknown_error_is_generic_and_points_to_details(self):
         info = explain_error(ValueError("zzz strange"))
         self.assertEqual(info.kind, "unknown")

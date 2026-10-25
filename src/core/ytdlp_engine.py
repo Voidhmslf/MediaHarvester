@@ -4,6 +4,7 @@ from typing import Callable, Any
 import yt_dlp
 from src.utils.helpers import FFMPEG_PATH, DownloadCancelledError
 from src.core.router import gallery_platform_name
+from src.utils import browser_cookies
 from src.utils.logger import get_logger
 
 log = get_logger("ytdlp")
@@ -41,7 +42,17 @@ def get_video_format_spec(choice: str) -> tuple[str, list[dict[str, Any]]]:
     return fmt, postprocessors
 
 
-def probe_video_quality(url: str, cookies_path: str = "") -> tuple[list[int], str]:
+def _apply_cookies(opts: dict[str, Any], cookies_path: str, cookies_browser: str) -> None:
+    """Файл cookies.txt в приоритете; иначе cookies читаются из выбранного браузера."""
+    if cookies_path and os.path.isfile(cookies_path):
+        opts["cookiefile"] = cookies_path
+    else:
+        from_browser = browser_cookies.ytdlp_option(cookies_browser)
+        if from_browser:
+            opts["cookiesfrombrowser"] = from_browser
+
+
+def probe_video_quality(url: str, cookies_path: str = "", cookies_browser: str = "") -> tuple[list[int], str]:
     """
     Получает список доступных разрешений по высоте и заголовок видео без его скачивания.
     Возвращает (список_высот, заголовок).
@@ -54,8 +65,7 @@ def probe_video_quality(url: str, cookies_path: str = "") -> tuple[list[int], st
     if FFMPEG_PATH:
         opts["ffmpeg_location"] = FFMPEG_PATH
 
-    if cookies_path and os.path.isfile(cookies_path):
-        opts["cookiefile"] = cookies_path
+    _apply_cookies(opts, cookies_path, cookies_browser)
 
     with yt_dlp.YoutubeDL(opts) as ydl:
         info = ydl.extract_info(url, download=False)
@@ -81,7 +91,8 @@ def download_video(
     cookies_path: str = "",
     cancel_event: threading.Event | None = None,
     allow_playlist: bool = False,
-    allow_gallery_fallback: bool = True
+    allow_gallery_fallback: bool = True,
+    cookies_browser: str = ""
 ) -> str:
     """
     Скачивает видео или аудио с помощью yt-dlp.
@@ -129,8 +140,7 @@ def download_video(
         opts["ffmpeg_location"] = FFMPEG_PATH
     if postprocessors:
         opts["postprocessors"] = postprocessors
-    if cookies_path and os.path.isfile(cookies_path):
-        opts["cookiefile"] = cookies_path
+    _apply_cookies(opts, cookies_path, cookies_browser)
 
     try:
         with yt_dlp.YoutubeDL(opts) as ydl:
@@ -166,6 +176,7 @@ def download_video(
                 download_path=download_path,
                 platform_name=platform,
                 cookies_path=cookies_path,
+                cookies_browser=cookies_browser,
                 status_callback=progress_callback,
                 cancel_event=cancel_event,
                 ytdlp_fallback=False,  # иначе gallery-dl вернёт нас сюда же

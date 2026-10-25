@@ -33,7 +33,7 @@ TYPE_PRIORITY = {t: len(TYPE_ORDER) - i for i, t in enumerate(TYPE_ORDER)}
 
 PHOTO_WORKERS = 8
 PHOTO_RETRIES = 3
-PHOTO_VARIANTS = 5                    # сколько вариантов размера пробуем, если самый крупный недоступен
+PHOTO_VARIANTS = 16                   # сколько вариантов размера пробуем (в ссылке их около 14), если крупный недоступен
 PERMANENT_HTTP_STATUSES = (403, 404, 410)  # повторять тот же адрес бессмысленно: сразу следующий размер
 PHOTO_EXTENSIONS = ("jpg", "jpeg", "png", "webp", "gif")
 FAILED_REPORT_NAME = "_failed.txt"

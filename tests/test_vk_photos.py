@@ -46,6 +46,11 @@ class SizeOrderTests(unittest.TestCase):
         sizes = [{"type": "m", "url": "u_m"}, {"type": "z", "url": "u_z"}, {"type": "s", "url": "u_s"}]
         self.assertEqual(ve.photo_size_urls(sizes), ["u_z", "u_m", "u_s"])
 
+    def test_default_limit_covers_all_sizes_of_a_vk_photo(self):
+        sizes = [{"width": i * 100, "height": i * 100, "url": f"u{i}"} for i in range(1, 15)]
+        urls = ve.photo_size_urls(sizes)
+        self.assertEqual((len(urls), urls[0], urls[-1]), (14, "u14", "u1"))
+
     def test_limit(self):
         sizes = [{"width": i, "height": i, "url": f"u{i}"} for i in range(1, 10)]
         self.assertEqual(len(ve.photo_size_urls(sizes, limit=3)), 3)

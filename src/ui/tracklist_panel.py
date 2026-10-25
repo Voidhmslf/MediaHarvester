@@ -87,8 +87,9 @@ class TracklistPanelMixin:
     def _paste_into_tracks(self):
         text = self._read_clipboard()
         if not text or not text.strip():
-            self.update_status("Буфер обмена пуст: сначала скопируйте список треков (Ctrl+C)", state="warning")
+            self._warn_empty_clipboard("список треков")
             return
+        self._clear_clipboard_warning()
         box = self.txt_tracks._textbox
         try:
             box.delete("sel.first", "sel.last")

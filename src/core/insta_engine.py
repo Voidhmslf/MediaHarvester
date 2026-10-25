@@ -7,6 +7,7 @@ def download_instagram(
     url: str,
     download_path: str,
     cookies_path: str = "",
+    cookies_browser: str = "",
     status_callback: Callable[[str, str, float | None, str], None] | None = None,
     cancel_event: threading.Event | None = None
 ) -> str:
@@ -21,6 +22,7 @@ def download_instagram(
         download_path=download_path,
         platform_name="Instagram",
         cookies_path=cookies_path,
+        cookies_browser=cookies_browser,
         status_callback=status_callback,
         cancel_event=cancel_event,
         ytdlp_fallback=is_reel_or_video,

@@ -91,11 +91,22 @@ class EditKeysMixin:
             else:
                 self._on_token_changed()
 
+    def _warn_empty_clipboard(self, what: str = "ссылку"):
+        self._clipboard_warned = True
+        self.update_status(f"Буфер обмена пуст: сначала скопируйте {what} (Ctrl+C)", state="warning")
+
+    def _clear_clipboard_warning(self):
+        """Убирает предупреждение «буфер пуст», как только вставка удалась."""
+        if getattr(self, "_clipboard_warned", False):
+            self._clipboard_warned = False
+            self.update_status("Готов к работе", state="idle")
+
     def paste_clipboard(self, entry_widget):
         text = (self._read_clipboard() or "").strip()
         if not text:
-            self.update_status("Буфер обмена пуст: сначала скопируйте ссылку (Ctrl+C)", state="warning")
+            self._warn_empty_clipboard()
             return
+        self._clear_clipboard_warning()
 
         if entry_widget is self.entry_token:
             text = extract_token(text)

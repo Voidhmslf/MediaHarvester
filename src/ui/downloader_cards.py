@@ -19,6 +19,7 @@ from src.config import (
 from src.core.vk_engine import VKPYMUSIC_AVAILABLE
 from src.core.router import detect_url_type
 from tkinter import filedialog
+from src.utils import browser_cookies
 from src.utils.helpers import open_folder
 from src.core.ytdlp_engine import probe_video_quality
 
@@ -237,9 +238,27 @@ class DownloaderCardsMixin:
             command=self.clear_cookies_file
         ).pack(side="right")
 
+        brow = ctk.CTkFrame(self.card_cookies, fg_color="transparent")
+        brow.pack(fill="x", padx=14, pady=(0, 6))
+        ctk.CTkLabel(brow, text="или взять из браузера:", font=self.font_small,
+                     text_color=TEXT_SECONDARY).pack(side="left", padx=(0, 8))
+        self.combo_cookies_browser = ctk.CTkOptionMenu(
+            brow, values=browser_cookies.BROWSER_CHOICES, command=self._on_cookies_browser_changed,
+            height=30, corner_radius=6, font=self.font_small, dropdown_font=self.font_small,
+            fg_color=SURFACE_INNER, button_color=SURFACE_CARD_BORDER,
+            button_hover_color=SURFACE_INNER_BORDER, dropdown_fg_color=SURFACE_CARD,
+            dropdown_hover_color=SURFACE_CARD_BORDER, dropdown_text_color=TEXT_MAIN,
+            text_color=TEXT_MAIN, dynamic_resizing=False, width=170)
+        saved_browser = self.settings.get("cookies_browser", "")
+        self.combo_cookies_browser.set(saved_browser if saved_browser in browser_cookies.BROWSER_CHOICES
+                                       else browser_cookies.NONE_CHOICE)
+        self.combo_cookies_browser.pack(side="left")
+
         self.lbl_cookies_hint = ctk.CTkLabel(
             self.card_cookies,
-            text="Для скачивания приватных постов Instagram, каруселей и видео 18+",
+            text=("Нужно для постов и каруселей Instagram (даже публичных), закрытых аккаунтов и видео 18+. "
+                  "Проще всего выбрать Firefox, где вы вошли в аккаунт; для Chrome, Edge и Opera браузер "
+                  "нужно закрыть на время скачивания"),
             font=self.font_subtitle, text_color=TEXT_MUTED, justify="left")
         self.lbl_cookies_hint.pack(anchor="w", padx=14, pady=(0, 10))
 
@@ -356,11 +375,19 @@ class DownloaderCardsMixin:
         self._update_cookies_badge()
         self.update_status("Cookies сброшены", state="idle")
 
+    def _on_cookies_browser_changed(self, choice: str):
+        self.settings.set("cookies_browser", "" if choice == browser_cookies.NONE_CHOICE else choice)
+        self._update_cookies_badge()
+
     def _update_cookies_badge(self):
         c_path = self.settings.cookies_path
+        browser = self.settings.get("cookies_browser", "")
         if c_path and os.path.isfile(c_path):
             self.badge_cookies_status.configure(
-                text="Настроен", text_color=STATUS_GREEN, fg_color=SURFACE_INNER)
+                text="Файл", text_color=STATUS_GREEN, fg_color=SURFACE_INNER)
+        elif browser:
+            self.badge_cookies_status.configure(
+                text=browser, text_color=STATUS_GREEN, fg_color=SURFACE_INNER)
         else:
             self.badge_cookies_status.configure(
                 text="Не задан", text_color=TEXT_MUTED, fg_color=SURFACE_INNER)
@@ -386,10 +413,11 @@ class DownloaderCardsMixin:
             text_color=TEXT_SECONDARY)
 
         cookies = self.settings.cookies_path
+        cookies_browser = self.settings.get("cookies_browser", "")
 
         def _worker():
             try:
-                heights, title = probe_video_quality(url, cookies_path=cookies)
+                heights, title = probe_video_quality(url, cookies_path=cookies, cookies_browser=cookies_browser)
 
                 def _success():
                     if heights:

@@ -109,6 +109,7 @@ class DownloadRunnerMixin:
             "tokens": {kind: self.settings.get_vk_token(kind) for kind in ("photos", "music", "music_android")},
             "music_client": self.settings.get("music_client", "kate"),
             "cookies_path": self.settings.cookies_path,
+            "cookies_browser": self.settings.get("cookies_browser", ""),
             "quality": self.combo_quality.get(),
             "allow_playlist": bool(self.chk_playlist.get()),
             "download_path": self.download_path,
@@ -209,6 +210,7 @@ class DownloadRunnerMixin:
                 url=target_url,
                 download_path=download_path,
                 cookies_path=opts["cookies_path"],
+                cookies_browser=opts["cookies_browser"],
                 status_callback=cb,
                 cancel_event=self.cancel_event
             )
@@ -218,6 +220,7 @@ class DownloadRunnerMixin:
                 download_path=download_path,
                 platform_name=gallery_platform_name(target_url) or "Gallery",
                 cookies_path=opts["cookies_path"],
+                cookies_browser=opts["cookies_browser"],
                 status_callback=cb,
                 cancel_event=self.cancel_event,
                 listing=bool(detected.get("listing")),
@@ -247,6 +250,7 @@ class DownloadRunnerMixin:
             quality_choice=opts["quality"],
             progress_callback=cb,
             cookies_path=opts["cookies_path"],
+            cookies_browser=opts["cookies_browser"],
             cancel_event=self.cancel_event,
             # Плейлист включается и сам, если ссылка ведёт на список (SoundCloud set, профиль TikTok)
             allow_playlist=opts["allow_playlist"] or bool(detected.get("playlist"))

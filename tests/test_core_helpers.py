@@ -11,7 +11,7 @@ import src.core.insta_engine as ie
 import src.core.ytdlp_engine as ye
 from src.config import SettingsManager
 from src.core.vk_engine import extract_album_ids, extract_token, get_best_photo_size
-from src.utils import helpers
+from src.utils import browser_cookies, helpers
 
 
 class HelpersTests(unittest.TestCase):
@@ -183,6 +183,40 @@ class GalleryEngineTests(unittest.TestCase):
                     self.run_gallery(tmp, stderr=stderr, returncode=1)
                 self.assertIn(expected, str(ctx.exception))
 
+    def test_browser_cookies_used_only_without_file(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            FakeProcess.commands.clear()
+            with mock.patch.object(ge.subprocess, "Popen", lambda cmd, **kw: FakeProcess(cmd, create_file=True)):
+                ge.download_gallery("https://www.instagram.com/p/AB/", tmp, "Instagram", "", lambda *a: None,
+                                    ytdlp_fallback=False, cookies_browser="Firefox")
+            cmd = FakeProcess.commands[-1]
+            self.assertEqual(cmd[cmd.index("--cookies-from-browser") + 1], "firefox")
+            self.assertNotIn("--cookies", cmd)
+
+    def test_instagram_login_redirect_gets_a_clear_message(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            with self.assertRaises(RuntimeError) as ctx:
+                self.run_gallery(tmp, url="https://www.instagram.com/p/AB/",
+                                 stderr="[instagram][error] HTTP redirect to login page", returncode=4)
+            text = str(ctx.exception)
+            self.assertIn("Требуется авторизация X", text)
+            self.assertIn("даже для публичных", text)
+
+    def test_unreadable_browser_cookies_message(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            with mock.patch.object(ge.subprocess, "Popen", lambda cmd, **kw: FakeProcess(
+                    cmd, stderr="[cookies][error] Failed to decrypt cookies database", returncode=1)):
+                with self.assertRaises(RuntimeError) as ctx:
+                    ge.download_gallery("https://x.com/a", tmp, "X", "", lambda *a: None,
+                                        ytdlp_fallback=False, cookies_browser="Chrome")
+            self.assertIn("Не удалось прочитать cookies из браузера (Chrome)", str(ctx.exception))
+
+    def test_dead_bundled_worker_is_explained(self):
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.object(ge.sys, "frozen", True, create=True):
+            with self.assertRaises(RuntimeError) as ctx:
+                self.run_gallery(tmp, returncode=0xFFFFFFFF)
+            self.assertIn("Перезапустите программу", str(ctx.exception))
+
     def test_cancel_is_respected(self):
         ev = threading.Event()
         ev.set()
@@ -190,6 +224,40 @@ class GalleryEngineTests(unittest.TestCase):
                 ge.subprocess, "Popen", lambda cmd, **kw: FakeProcess(cmd, stdout_lines="a.jpg\n")):
             with self.assertRaises(helpers.DownloadCancelledError):
                 ge.download_gallery("https://x.com/a", tmp, "X", cancel_event=ev)
+
+
+class BrowserCookiesTests(unittest.TestCase):
+    def test_choices_and_resolution(self):
+        self.assertEqual(browser_cookies.BROWSER_CHOICES[0], browser_cookies.NONE_CHOICE)
+        self.assertIsNone(browser_cookies.resolve(browser_cookies.NONE_CHOICE))
+        self.assertIsNone(browser_cookies.gallery_dl_arg(""))
+        self.assertEqual(browser_cookies.gallery_dl_arg("Firefox"), "firefox")
+        self.assertEqual(browser_cookies.ytdlp_option("Edge"), ("edge", None, None, None))
+
+    def test_opera_gx_uses_its_own_profile_folder(self):
+        with mock.patch.dict(os.environ, {"APPDATA": r"C:\Users\X\AppData\Roaming"}):
+            arg = browser_cookies.gallery_dl_arg("Opera GX")
+            option = browser_cookies.ytdlp_option("Opera GX")
+        self.assertTrue(arg.startswith("opera:"))
+        self.assertIn("Opera GX Stable", arg)
+        self.assertEqual(option[0], "opera")
+        self.assertIn("Opera GX Stable", option[1])
+
+
+class YtdlpCookiesTests(unittest.TestCase):
+    def test_file_beats_browser_and_browser_is_fallback(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            cookie_file = os.path.join(tmp, "cookies.txt")
+            open(cookie_file, "w").close()
+            opts = {}
+            ye._apply_cookies(opts, cookie_file, "Firefox")
+            self.assertEqual(opts, {"cookiefile": cookie_file})
+        opts = {}
+        ye._apply_cookies(opts, "", "Firefox")
+        self.assertEqual(opts, {"cookiesfrombrowser": ("firefox", None, None, None)})
+        opts = {}
+        ye._apply_cookies(opts, "missing.txt", "")
+        self.assertEqual(opts, {})
 
 
 class InstagramWrapperTests(unittest.TestCase):

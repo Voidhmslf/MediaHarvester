@@ -60,7 +60,7 @@ def make_runner():
 def opts(mode, **extra):
     base = {
         "mode": mode, "tokens": {"photos": "PHOTO_TOKEN", "music": "KATE_TOKEN", "music_android": "ANDROID_TOKEN"},
-        "music_client": "kate", "cookies_path": "cookies.txt", "quality": "HD (720p)",
+        "music_client": "kate", "cookies_path": "cookies.txt", "cookies_browser": "Firefox", "quality": "HD (720p)",
         "allow_playlist": False, "download_path": "DL", "tracklist": "A — B",
     }
     base.update(extra)
@@ -107,6 +107,7 @@ class EngineDispatchTests(unittest.TestCase):
         self.assertEqual(result, "DL")
         self.assertEqual(calls["video"]["quality_choice"], "HD (720p)")
         self.assertEqual(calls["video"]["cookies_path"], "cookies.txt")
+        self.assertEqual(calls["video"]["cookies_browser"], "Firefox")
         self.assertIn("Готово: Название", statuses[-1][0])
 
     def test_playlist_links_enable_playlist_download_automatically(self):
@@ -134,8 +135,10 @@ class EngineDispatchTests(unittest.TestCase):
     def test_instagram_post_and_gallery_platforms(self):
         _, calls, _ = self.dispatch("https://www.instagram.com/p/AB/", opts(SMART))
         self.assertIn("insta", calls)
+        self.assertEqual(calls["insta"]["cookies_browser"], "Firefox")
         _, calls, _ = self.dispatch("https://www.pinterest.com/user/board/", opts(SMART))
         self.assertEqual((calls["gallery"]["platform_name"], calls["gallery"]["listing"]), ("Pinterest", True))
+        self.assertEqual(calls["gallery"]["cookies_browser"], "Firefox")
         _, calls, _ = self.dispatch("https://www.pinterest.com/pin/1/", opts(SMART))
         self.assertFalse(calls["gallery"]["listing"])
 
@@ -224,6 +227,34 @@ class MainWindowTests(unittest.TestCase):
         app.update_status("Готово", state="success", progress=1.0)
         app.update()
         self.assertEqual(app.lbl_percentage.cget("text"), "100%")
+
+    def test_clipboard_warning_disappears_after_a_successful_paste(self):
+        from src.utils import clipboard
+        app = self.app
+        previous = clipboard.get_text()
+        try:
+            clipboard.clear()
+            app.paste_clipboard(app.entry_url)
+            app.update()
+            self.assertIn("Буфер обмена пуст", app.lbl_status_text.cget("text"))
+            clipboard.set_text("https://youtu.be/abc")
+            app.paste_clipboard(app.entry_url)
+            app.update()
+            self.assertNotIn("Буфер обмена пуст", app.lbl_status_text.cget("text"))
+            self.assertEqual(app.lbl_status_text.cget("text"), "Готов к работе")
+        finally:
+            app._clear_url()
+            if previous:
+                clipboard.set_text(previous)
+
+    def test_cookies_browser_choice_is_saved_and_shown(self):
+        app = self.app
+        app._on_cookies_browser_changed("Firefox")
+        self.assertEqual(app.settings.get("cookies_browser"), "Firefox")
+        self.assertEqual(app.badge_cookies_status.cget("text"), "Firefox")
+        app._on_cookies_browser_changed("Не использовать")
+        self.assertEqual(app.settings.get("cookies_browser"), "")
+        self.assertEqual(app.badge_cookies_status.cget("text"), "Не задан")
 
     def test_info_screen_toggle(self):
         app = self.app

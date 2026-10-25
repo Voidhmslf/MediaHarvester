@@ -23,6 +23,10 @@ class ErrorInfo:
 
 # (kind, regex, сообщение, подсказка). Порядок важен: более конкретные правила — выше.
 _RULES: list[tuple[str, str, str, str]] = [
+    ("browser_cookies", r"could not copy .*cookie|failed to decrypt|cookies? (database|from browser)|"
+                        r"не удалось прочитать cookies",
+     "Не удалось прочитать cookies из браузера",
+     "Закройте браузер и повторите, выберите Firefox либо укажите файл cookies.txt"),
     ("vk_scope", r"vk api error 15|no access to call this method|cannot be called with current scopes",
      "VK не разрешил этому токену доступ (ошибка 15)",
      "Для музыки войдите заново в режиме «Музыка» кнопкой «Войти через ВКонтакте» (нужен отдельный токен). "

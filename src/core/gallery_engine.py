@@ -3,6 +3,7 @@ import subprocess
 import sys
 import threading
 from typing import Callable
+from src.utils import browser_cookies
 from src.utils.helpers import DownloadCancelledError
 from src.utils.logger import get_logger
 
@@ -27,6 +28,7 @@ def download_gallery(
     cancel_event: threading.Event | None = None,
     listing: bool = False,
     ytdlp_fallback: bool = True,
+    cookies_browser: str = "",
 ) -> str:
     """
     Скачивает фото, галереи, карусели и видео постов через gallery-dl (Instagram, X, Pinterest,
@@ -56,8 +58,11 @@ def download_gallery(
         cmd += ["--range", f"1-{LISTING_LIMIT}"]
 
     has_cookies = bool(cookies_path and os.path.isfile(cookies_path))
+    browser_arg = None if has_cookies else browser_cookies.gallery_dl_arg(cookies_browser)
     if has_cookies:
         cmd.extend(["--cookies", cookies_path])
+    elif browser_arg:
+        cmd.extend(["--cookies-from-browser", browser_arg])
 
     cmd.append(url)
 
@@ -134,6 +139,7 @@ def download_gallery(
                 quality_choice="Максимальное (Авто)",
                 progress_callback=status_callback or (lambda *args: None),
                 cookies_path=cookies_path if has_cookies else "",
+                cookies_browser=cookies_browser,
                 cancel_event=cancel_event,
                 allow_gallery_fallback=False,  # иначе yt-dlp вернёт нас сюда же
             )
@@ -148,10 +154,21 @@ def download_gallery(
         _notify(f"Готово: скачано медиа-файлов: {downloaded_count}", "success", 1.0, "100%")
         return target_dir
 
+    # Встроенный gallery-dl не запустился совсем (нет вывода, код -1): обычно запущена старая копия программы,
+    # а файл .exe уже заменили, и защита PyInstaller не даёт дочернему процессу стартовать
+    if getattr(sys, "frozen", False) and returncode in (-1, 0xFFFFFFFF) and not all_output.strip():
+        raise RuntimeError("Не удалось запустить встроенный gallery-dl. Перезапустите программу "
+                           "(возможно, файл .exe был заменён, пока она работала)")
+
     # Анализ ошибок и формирование понятного ответа
     out_lower = all_output.lower()
-    if any(k in out_lower for k in ("login required", "401", "unauthorized", "checkpoint", "redirected to login", "private")):
-        raise RuntimeError(f"Требуется авторизация {platform_name}: укажите cookies.txt в настройках")
+    if browser_arg and any(k in out_lower for k in ("cookie", "decrypt", "could not copy", "database", "keyring")):
+        raise RuntimeError(f"Не удалось прочитать cookies из браузера ({cookies_browser}): закройте браузер "
+                           "или выберите Firefox либо файл cookies.txt")
+    if any(k in out_lower for k in ("login required", "401", "unauthorized", "checkpoint", "redirected to login",
+                                    "redirect to login", "private")):
+        raise RuntimeError(f"Требуется авторизация {platform_name}: укажите cookies.txt или выберите браузер "
+                           "в блоке Cookies. Instagram требует вход даже для публичных постов и каруселей")
 
     if any(k in out_lower for k in ("429", "too many requests", "rate limit")):
         raise RuntimeError(f"{platform_name} временно ограничил запросы (429). Укажите cookies.txt в настройках")
