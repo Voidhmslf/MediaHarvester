@@ -1,0 +1,24 @@
+{
+  "harvest": "#D9480F",
+  "on-harvest": "#FFFFFF",
+  "harvest-tint": {
+    "light": "#FDE7DC",
+    "dark": "#3A1E12"
+  },
+  "surface": {
+    "light": "#FFFFFF",
+    "dark": "#121212"
+  },
+  "surface-raised": {
+    "light": "#F3F4F6",
+    "dark": "#2A2A2E"
+  },
+  "ink": {
+    "light": "#1A1A1A",
+    "dark": "#F2F2F2"
+  },
+  "ink-muted": {
+    "light": "#5F6368",
+    "dark": "#A6A6AD"
+  }
+}

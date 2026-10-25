@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=MediaHarvester
+Comment=Download media
+Exec=mediaharvester %U
+Icon=mediaharvester
+Terminal=false
+Categories=Network;AudioVideo;FileTransfer;

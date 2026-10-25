@@ -1,0 +1,16 @@
+:root{
+  --mh-harvest:#D9480F;
+  --mh-on-harvest:#FFFFFF;
+  --mh-harvest-tint:#FDE7DC;
+  --mh-surface:#FFFFFF;
+  --mh-surface-raised:#F3F4F6;
+  --mh-ink:#1A1A1A;
+  --mh-ink-muted:#5F6368;
+}
+[data-theme="dark"]{
+  --mh-harvest-tint:#3A1E12;
+  --mh-surface:#121212;
+  --mh-surface-raised:#2A2A2E;
+  --mh-ink:#F2F2F2;
+  --mh-ink-muted:#A6A6AD;
+}
