@@ -33,6 +33,8 @@ TYPE_PRIORITY = {t: len(TYPE_ORDER) - i for i, t in enumerate(TYPE_ORDER)}
 
 PHOTO_WORKERS = 8
 PHOTO_RETRIES = 3
+PHOTO_VARIANTS = 5                    # сколько вариантов размера пробуем, если самый крупный недоступен
+PERMANENT_HTTP_STATUSES = (403, 404, 410)  # повторять тот же адрес бессмысленно: сразу следующий размер
 PHOTO_EXTENSIONS = ("jpg", "jpeg", "png", "webp", "gif")
 FAILED_REPORT_NAME = "_failed.txt"
 
@@ -100,6 +102,28 @@ def get_best_photo_size(sizes: list[dict[str, Any]]) -> dict[str, Any] | None:
     return max(sizes, key=lambda s: TYPE_PRIORITY.get(s.get("type", ""), 0))
 
 
+def photo_size_urls(sizes: list[dict[str, Any]], limit: int = PHOTO_VARIANTS) -> list[str]:
+    """
+    Адреса всех вариантов фото от самого крупного к меньшим (без повторов, не больше limit).
+    У части фото VK адрес самого большого размера отвечает 404, тогда скачивается следующий по размеру.
+    """
+    def area(size: dict[str, Any]) -> int:
+        return (size.get("width", 0) or 0) * (size.get("height", 0) or 0)
+
+    with_url = [sz for sz in sizes if sz.get("url")]
+    if any(area(sz) for sz in with_url):
+        ordered = sorted(with_url, key=lambda sz: (area(sz), TYPE_PRIORITY.get(sz.get("type", ""), 0)), reverse=True)
+    else:
+        ordered = sorted(with_url, key=lambda sz: TYPE_PRIORITY.get(sz.get("type", ""), 0), reverse=True)
+    urls: list[str] = []
+    for size in ordered:
+        if size["url"] not in urls:
+            urls.append(size["url"])
+        if len(urls) >= limit:
+            break
+    return urls
+
+
 def photo_extension(url: str) -> str:
     """Берёт расширение файла из URL фото; по умолчанию jpg."""
     ext = os.path.splitext(urlparse(url).path)[1].lstrip(".").lower()
@@ -116,15 +140,16 @@ def existing_photo_ids(folder: str) -> set[str]:
     return ids
 
 
-def download_photo_file(
+def _download_one_url(
     session: requests.Session,
     url: str,
     out_path: str,
-    cancel_event: threading.Event | None = None
+    cancel_event: threading.Event | None,
 ) -> None:
     """
-    Скачивает один файл во временный .part и атомарно переименовывает по завершении.
-    Делает до PHOTO_RETRIES попыток с нарастающей паузой, проверяет полноту по Content-Length.
+    Скачивает один адрес во временный .part и атомарно переименовывает по завершении.
+    Временные сбои повторяет до PHOTO_RETRIES раз с нарастающей паузой; ответы 403/404/410
+    считает окончательными (повтор не поможет) и сразу бросает ошибку. Проверяет полноту по Content-Length.
     """
     part_path = out_path + ".part"
     last_error: Exception | None = None
@@ -148,6 +173,13 @@ def download_photo_file(
             return
         except DownloadCancelledError:
             raise
+        except requests.exceptions.HTTPError as e:
+            last_error = e
+            status = e.response.status_code if e.response is not None else None
+            if status in PERMANENT_HTTP_STATUSES:
+                raise
+            if attempt < PHOTO_RETRIES - 1:
+                time.sleep(1.5 * (attempt + 1))
         except Exception as e:
             last_error = e
             if attempt < PHOTO_RETRIES - 1:
@@ -159,6 +191,31 @@ def download_photo_file(
                 except OSError:
                     pass
     raise last_error if last_error else RuntimeError("Неизвестная ошибка загрузки")
+
+
+def download_photo_file(
+    session: requests.Session,
+    url: str | list[str],
+    out_path: str,
+    cancel_event: threading.Event | None = None
+) -> None:
+    """
+    Скачивает фото по одному адресу или по списку вариантов (от крупного к мелкому): если крупный вариант
+    недоступен (например, 404), пробует следующий. Ошибка бросается, только когда не сработал ни один.
+    """
+    candidates = [url] if isinstance(url, str) else list(url)
+    last_error: Exception | None = None
+    for index, candidate in enumerate(candidates):
+        try:
+            _download_one_url(session, candidate, out_path, cancel_event)
+            if index:
+                log.info("Фото %s: крупный вариант недоступен, скачан вариант №%s", os.path.basename(out_path), index + 1)
+            return
+        except DownloadCancelledError:
+            raise
+        except Exception as e:
+            last_error = e
+    raise last_error if last_error else RuntimeError("Нет адресов для скачивания")
 
 
 def download_vk_photos(
@@ -229,22 +286,21 @@ def download_vk_photos(
         # Докачка: фото, уже лежащие в папке (по id), пропускаем
         already = existing_photo_ids(target_folder)
 
-        jobs: list[tuple[int, str, str, str]] = []  # (номер, id, url, путь)
+        jobs: list[tuple[int, str, list[str], str]] = []  # (номер, id, варианты url, путь)
         failed: list[tuple[int, str, str]] = []     # (номер, url, причина)
         skipped = 0
         for i, photo in enumerate(all_items):
             photo_id = str(photo.get("id", i))
-            best_size = get_best_photo_size(photo.get("sizes", []))
-            if not best_size or "url" not in best_size:
+            urls_i = photo_size_urls(photo.get("sizes", []))
+            if not urls_i:
                 failed.append((i + 1, "", "нет ссылки на файл"))
             elif photo_id in already:
                 skipped += 1
             else:
-                url_i = best_size["url"]
                 out_path = os.path.join(
-                    target_folder, f"photo_{i + 1:04d}_{photo_id}.{photo_extension(url_i)}"
+                    target_folder, f"photo_{i + 1:04d}_{photo_id}.{photo_extension(urls_i[0])}"
                 )
-                jobs.append((i + 1, photo_id, url_i, out_path))
+                jobs.append((i + 1, photo_id, urls_i, out_path))
 
         downloaded = 0
         done = skipped + len(failed)
@@ -261,19 +317,20 @@ def download_vk_photos(
         executor = ThreadPoolExecutor(max_workers=PHOTO_WORKERS)
         try:
             futures = {
-                executor.submit(download_photo_file, session, url_i, out_path, cancel_event): (num, url_i)
-                for num, _pid, url_i, out_path in jobs
+                executor.submit(download_photo_file, session, urls_i, out_path, cancel_event): (num, urls_i)
+                for num, _pid, urls_i, out_path in jobs
             }
             for fut in as_completed(futures):
-                num, url_i = futures[fut]
+                num, urls_i = futures[fut]
+                url_i = urls_i[0]
                 try:
                     fut.result()
                     downloaded += 1
                 except DownloadCancelledError:
                     pass
                 except Exception as e:
-                    failed.append((num, url_i, str(e)[:120]))
-                    log.warning("VK фото #%s не скачано: %s", num, e)
+                    failed.append((num, url_i, f"{str(e)[:100]} (пробовали вариантов: {len(urls_i)})"))
+                    log.warning("VK фото #%s не скачано (вариантов %s): %s", num, len(urls_i), e)
                 done += 1
 
                 if cancel_event and cancel_event.is_set():
