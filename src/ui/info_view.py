@@ -2,6 +2,7 @@
 from src.version import __version__
 import customtkinter as ctk
 from src.ui import theme
+from src.ui.widgets import ScrollFrame
 from src.ui.theme import (
     BTN_SECONDARY,
     BTN_SECONDARY_HOVER,
@@ -20,7 +21,7 @@ class InfoViewMixin:
     # ЭКРАН 2: СПРАВКА
     # ──────────────────────────────────────────────────────
     def create_info_view(self):
-        self.info_scroll = ctk.CTkScrollableFrame(
+        self.info_scroll = ScrollFrame(
             self.views_container, fg_color="transparent", **theme.scrollbar_style())
         self.info_labels = []
 

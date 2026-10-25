@@ -7,6 +7,7 @@ from src.config import (
     QUALITY_PRESETS,
 )
 from src.ui import theme
+from src.ui.widgets import ScrollFrame
 from src.ui.theme import (
     ACCENT,
     ACCENT_HOVER,
@@ -35,7 +36,7 @@ class DownloaderCardsMixin:
     # ЭКРАН 1: ЗАГРУЗЧИК
     # ──────────────────────────────────────────────────────
     def create_downloader_view(self):
-        self.main_scroll = ctk.CTkScrollableFrame(
+        self.main_scroll = ScrollFrame(
             self.views_container, fg_color="transparent", **theme.scrollbar_style())
         self._build_mode_card()
         self._build_url_card()

@@ -11,7 +11,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/Voidhmslf/MediaHarvester/releases"><img src="https://img.shields.io/badge/Release-v1.2.0-D9480F?style=for-the-badge&logo=github" alt="Release v1.2.0"></a>
+  <a href="https://github.com/Voidhmslf/MediaHarvester/releases"><img src="https://img.shields.io/badge/Release-v1.2.1-D9480F?style=for-the-badge&logo=github" alt="Release v1.2.1"></a>
   <a href="https://www.python.org/downloads/"><img src="https://img.shields.io/badge/Python-3.11+-3776AB?style=for-the-badge&logo=python&logoColor=white" alt="Python 3.11+"></a>
   <a href="https://github.com/TomSchimansky/CustomTkinter"><img src="https://img.shields.io/badge/UI-CustomTkinter-2B2B2B?style=for-the-badge" alt="CustomTkinter"></a>
   <img src="https://img.shields.io/badge/Theme-light%20%2F%20dark-1A1A1A?style=for-the-badge" alt="Светлая и тёмная тема">
@@ -182,7 +182,8 @@ MediaHarvester/
 │   │   ├── download_runner.py   # Запуск и отмена скачивания, выбор движка
 │   │   ├── edit_keys.py         # Буфер обмена и Ctrl+V/C/X/A в любой раскладке
 │   │   ├── engine_status.py     # Проверка ffmpeg и автообновление yt-dlp при старте
-│   │   └── info_view.py         # Экран «Справка»
+│   │   ├── info_view.py         # Экран «Справка»
+│   │   └── widgets.py           # ScrollFrame: надёжная прокрутка колесом и тачпадом
 │   └── utils/
 │       ├── helpers.py           # FFmpeg, пути, имена файлов, папка данных приложения
 │       ├── logger.py            # Лог с ротацией и маскировкой токенов
@@ -217,6 +218,7 @@ python -m unittest discover -s tests -t .
 | `test_errors.py`, `test_ytdlp_updater.py` | понятные ошибки, лог, автообновление yt-dlp |
 | `test_ui_structure.py` | состав окна, выбор движка для каждой ссылки, карточки, очередь |
 | `test_theme.py` | палитра (контраст текста в обеих темах), переключение темы, шрифты и бренд-ресурсы |
+| `test_scrolling.py` | прокрутка колесом и тачпадом: фокус вне области, залипший Shift, мелкие шаги, текстовое поле |
 
 ---
 
