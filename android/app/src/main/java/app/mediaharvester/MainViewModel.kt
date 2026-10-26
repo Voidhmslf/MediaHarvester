@@ -14,6 +14,8 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
+enum class Tab { LINKS, TRACKS, HISTORY }
+
 data class UiState(
     val ready: Boolean = false,
     val version: String = "",
@@ -27,7 +29,16 @@ data class UiState(
     val notice: String? = null,
     val input: String = "",
     val tracksInput: String = "",
-    val tracksMode: Boolean = false,
+    val tab: Tab = Tab.LINKS,
+    val settingsOpen: Boolean = false,
+    val history: List<HistoryEntry> = emptyList(),
+    val wifiOnly: Boolean = false,
+    val autoUpdate: Boolean = true,
+    val folderName: String = Settings.DEFAULT_FOLDER,
+    val engines: EngineInfo? = null,
+    val updateStatus: String = "",
+    val updating: Boolean = false,
+    val stagingBytes: Long = 0,
     val vkAuthUrl: String = "",
     val vkLoggedIn: Boolean = false,
     val vkName: String = "",
@@ -38,7 +49,10 @@ data class UiState(
 
 class MainViewModel(app: Application) : AndroidViewModel(app) {
     private val prefs = app.getSharedPreferences("settings", Context.MODE_PRIVATE)
-    private val _state = MutableStateFlow(UiState(theme = prefs.getString("theme", "system") ?: "system"))
+    private val _state = MutableStateFlow(UiState(
+        theme = prefs.getString("theme", "system") ?: "system",
+        wifiOnly = Settings.wifiOnly(app), autoUpdate = Settings.autoUpdate(app), folderName = Settings.folderName(app),
+    ))
     val state: StateFlow<UiState> = _state.asStateFlow()
 
     private val ctx get() = getApplication<Application>()
@@ -47,6 +61,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch(Dispatchers.Default) {
             val qualities = Bridge.qualities(ctx)
             val saved = prefs.getString("quality", null)
+            History.load(ctx)
             applyAccounts()
             val savedToken = prefs.getString("vk_token", "") ?: ""
             if (savedToken.isNotEmpty()) Bridge.vkLogin(ctx, savedToken, validate = false)
@@ -63,7 +78,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 val snap = Bridge.snapshot(ctx)
                 _state.update {
                     it.copy(items = snap.items, running = snap.running, cancelling = snap.cancelling,
-                        saved = Exporter.saved.value)
+                        saved = Exporter.saved.value, history = History.entries.value)
                 }
                 delay(500)
             }
@@ -90,11 +105,74 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         _state.update { it.copy(quality = q) }
     }
 
-    fun cycleTheme() {
-        val next = when (_state.value.theme) { "system" -> "light"; "light" -> "dark"; else -> "system" }
-        prefs.edit().putString("theme", next).apply()
-        _state.update { it.copy(theme = next) }
+    fun setTheme(mode: String) {
+        prefs.edit().putString("theme", mode).apply()
+        _state.update { it.copy(theme = mode) }
     }
+
+    // ───── Настройки ─────
+    fun openSettings(open: Boolean) {
+        _state.update { it.copy(settingsOpen = open) }
+        if (open) io {
+            val engines = runCatching { Bridge.engineInfo(ctx) }.getOrNull()
+            val bytes = Bridge.stagingDir(ctx).walkTopDown().filter { it.isFile }.sumOf { it.length() }
+            _state.update { it.copy(engines = engines, stagingBytes = bytes) }
+        }
+    }
+
+    fun setWifiOnly(on: Boolean) {
+        Settings.setWifiOnly(ctx, on)
+        _state.update { it.copy(wifiOnly = on) }
+    }
+
+    fun setAutoUpdate(on: Boolean) {
+        Settings.setAutoUpdate(ctx, on)
+        _state.update { it.copy(autoUpdate = on) }
+    }
+
+    fun setFolderName(value: String) {
+        Settings.setFolderName(ctx, value)
+        _state.update { it.copy(folderName = Settings.folderName(ctx)) }
+    }
+
+    fun checkYtdlpUpdate() = io {
+        _state.update { it.copy(updating = true, updateStatus = "Проверяю…") }
+        val r = runCatching { Bridge.updateYtdlp(ctx) }.getOrNull()
+        val text = when (r?.status) {
+            "current" -> "Установлена последняя версия (${r.current})"
+            "updated" -> "Скачана версия ${r.latest}: она заработает после перезапуска приложения"
+            "error" -> "Не удалось проверить: ${r.message.ifBlank { "нет связи с GitHub" }}"
+            null -> "Не удалось проверить обновление"
+            else -> "Проверка пропущена"
+        }
+        val engines = runCatching { Bridge.engineInfo(ctx) }.getOrNull()
+        _state.update { it.copy(updating = false, updateStatus = text, engines = engines ?: it.engines) }
+    }
+
+    /** Текст для «Поделиться»: версии и хвост журнала без секретов. */
+    fun diagnostics(): String {
+        val s = _state.value
+        val e = s.engines ?: runCatching { Bridge.engineInfo(ctx) }.getOrNull()
+        val head = "MediaHarvester ${s.version} · yt-dlp ${e?.ytdlp.orEmpty()} · gallery-dl ${e?.gallery.orEmpty()} · Android ${android.os.Build.VERSION.RELEASE}"
+        return head + "\n\n" + runCatching { Bridge.logTail(ctx) }.getOrDefault("")
+    }
+
+    fun clearStaging() = io {
+        if (!_state.value.running) Bridge.stagingDir(ctx).listFiles()?.forEach { it.deleteRecursively() }
+        val bytes = Bridge.stagingDir(ctx).walkTopDown().filter { it.isFile }.sumOf { it.length() }
+        _state.update { it.copy(stagingBytes = bytes) }
+        notice("Временные файлы удалены")
+    }
+
+    // ───── История ─────
+    fun historyRequeue(entry: HistoryEntry) = io {
+        val added = Bridge.addLinks(ctx, entry.url)
+        notice(if (added > 0) "Ссылка снова в очереди" else "Эта ссылка уже в очереди")
+        if (added > 0) _state.update { it.copy(tab = Tab.LINKS) }
+    }
+
+    fun historyRemove(entry: HistoryEntry) = io { History.remove(ctx, entry) }
+    fun historyClear() = io { History.clear(ctx) }
 
     /** Пересобирает общий cookies.txt, отдаёт его движкам и обновляет статусы блока «Аккаунты». */
     private fun applyAccounts() {
@@ -147,7 +225,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         _state.update { it.copy(vkLoggedIn = false, vkName = "", vkAwaiting = false) }
     }
 
-    fun setTracksMode(on: Boolean) = _state.update { it.copy(tracksMode = on) }
+    fun setTab(tab: Tab) = _state.update { it.copy(tab = tab) }
 
     fun setTracksInput(text: String) = _state.update { it.copy(tracksInput = text) }
 
@@ -195,6 +273,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         }
         if (s.running) {
             Bridge.cancel(ctx)
+        } else if (s.wifiOnly && !Settings.onUnmeteredNetwork(ctx)) {
+            notice("Включён режим «Только по Wi-Fi»: подключитесь к Wi-Fi или выключите его в настройках")
         } else if (Bridge.start(ctx, s.quality)) {
             withContext(Dispatchers.Main) { DownloadService.start(ctx) }
         } else {

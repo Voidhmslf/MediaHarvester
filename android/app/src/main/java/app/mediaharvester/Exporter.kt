@@ -51,7 +51,7 @@ object Exporter {
         val staging = Bridge.stagingDir(context)
         // Подпапка сохраняется: staging/Instagram_Downloads/x.jpg -> Download/MediaHarvester/Instagram_Downloads/
         val sub = file.parentFile?.relativeToOrNull(staging)?.path?.replace('\\', '/').orEmpty()
-        val relative = listOf("Download/MediaHarvester", sub).filter { it.isNotEmpty() }.joinToString("/")
+        val relative = listOf("Download/${Settings.folderName(context)}", sub).filter { it.isNotEmpty() }.joinToString("/")
         val mime = MimeTypeMap.getSingleton().getMimeTypeFromExtension(file.extension.lowercase())
         val values = ContentValues().apply {
             put(MediaStore.Downloads.DISPLAY_NAME, file.name)

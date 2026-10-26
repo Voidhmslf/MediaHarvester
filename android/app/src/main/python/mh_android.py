@@ -19,7 +19,7 @@ _vk_token = ""
 _cookies_path = ""
 
 
-def init(data_dir: str, staging_dir: str, ffmpeg_dir: str = "", ffmpeg_libs: str = "") -> None:
+def init(data_dir: str, staging_dir: str, ffmpeg_dir: str = "", ffmpeg_libs: str = "", auto_update: bool = True) -> None:
     """Вызывается один раз при запуске: пути приложения и (необязательно) папка с ffmpeg и его библиотеками."""
     global _inited, _staging
     with _lock:
@@ -34,7 +34,15 @@ def init(data_dir: str, staging_dir: str, ffmpeg_dir: str = "", ffmpeg_libs: str
         _staging = staging_dir
         from src.utils.logger import setup_logging
         setup_logging()
+        # Загруженный раньше yt-dlp подключается ДО первого импорта yt_dlp (иначе останется версия из APK)
+        try:
+            from src.utils.ytdlp_updater import activate_override
+            activate_override()
+        except Exception:
+            pass
         _inited = True
+        if auto_update:
+            threading.Thread(target=_background_update, name="mh-update", daemon=True).start()
 
 
 def vk_auth_url() -> str:
@@ -99,6 +107,48 @@ def vk_logout() -> None:
     global _vk_token
     with _lock:
         _vk_token = ""
+
+
+def _background_update() -> None:
+    """Раз в 12 часов проверяет новый yt-dlp (как на компьютере); вступает в силу после перезапуска."""
+    try:
+        from src.utils.ytdlp_updater import check_for_update
+        check_for_update()
+    except Exception:
+        pass
+
+
+def engine_versions() -> str:
+    """Версии движков: yt-dlp (в работе и скачанная, если новее), gallery-dl."""
+    from src.utils.ytdlp_updater import current_version, override_path, read_zip_version, version_key
+    ytdlp = current_version()
+    pending = ""
+    try:
+        zipped = read_zip_version(override_path())
+        if zipped and version_key(zipped) > version_key(ytdlp):
+            pending = zipped
+    except Exception:
+        pass
+    try:
+        import gallery_dl.version
+        gallery = gallery_dl.version.__version__
+    except Exception:
+        gallery = ""
+    return json.dumps({"ytdlp": ytdlp, "pending": pending, "gallery_dl": gallery}, ensure_ascii=False)
+
+
+def update_ytdlp() -> str:
+    """Принудительная проверка yt-dlp. Возвращает JSON {status, current, latest, message}."""
+    from src.utils.ytdlp_updater import check_for_update
+    r = check_for_update(force=True)
+    return json.dumps({"status": r.status, "current": r.current, "latest": r.latest, "message": r.message},
+                      ensure_ascii=False)
+
+
+def log_tail() -> str:
+    """Хвост журнала (секреты замаскированы) — чтобы поделиться им при ошибке."""
+    from src.utils.logger import read_log_tail
+    return read_log_tail(200)
 
 
 def version() -> str:

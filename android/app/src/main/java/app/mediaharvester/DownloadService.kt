@@ -48,6 +48,7 @@ class DownloadService : Service() {
         while (true) {
             last = Bridge.snapshot(this)
             Exporter.exportDone(this, last.items)
+            History.record(this, last.items, Exporter.saved.value)
             val total = last.items.count { it.status != ItemStatus.CANCELLED }
             val finished = last.items.count { it.status == ItemStatus.DONE || it.status == ItemStatus.ERROR }
             val current = last.items.firstOrNull { it.status == ItemStatus.WORKING }
@@ -58,7 +59,7 @@ class DownloadService : Service() {
         }
         val done = last.items.count { it.status == ItemStatus.DONE }
         val failed = last.items.count { it.status == ItemStatus.ERROR }
-        val summary = if (failed > 0) "Готово: $done, с ошибкой: $failed" else "Готово: $done. Файлы в Загрузки/MediaHarvester"
+        val summary = if (failed > 0) "Готово: $done, с ошибкой: $failed" else "Готово: $done. Файлы в Загрузки/${Settings.folderName(this)}"
         stopForeground(STOP_FOREGROUND_REMOVE)
         nm.notify(NOTIFICATION_ID + 1, finishedNotification(summary))
         stopSelf()

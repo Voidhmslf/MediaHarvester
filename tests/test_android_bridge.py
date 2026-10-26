@@ -129,6 +129,16 @@ class BridgeQueueTests(unittest.TestCase):
         self.assertIn("Аккаунты", self.bridge._android_text("Нужен вход в аккаунт или доступ закрыт",
                                                             "Укажите cookies.txt из браузера")[1])
 
+    def test_engine_versions_and_update_report(self):
+        info = json.loads(self.bridge.engine_versions())
+        self.assertRegex(info["ytdlp"], r"^\d{4}\.\d{2}\.\d{2}")
+        self.assertTrue(info["gallery_dl"])
+        from src.utils import ytdlp_updater as up
+        fake = up.UpdateResult("updated", current="2026.01.01", latest="2026.02.02")
+        with mock.patch.object(up, "check_for_update", return_value=fake):
+            res = json.loads(self.bridge.update_ytdlp())
+        self.assertEqual((res["status"], res["latest"]), ("updated", "2026.02.02"))
+
     def test_tracklist_becomes_single_queue_item(self):
         text = "1. Queen - Bohemian Rhapsody\n# коммент\nABBA — Waterloo\n"
         self.assertEqual(self.bridge.add_tracks(text), 2)

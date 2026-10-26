@@ -25,6 +25,9 @@ data class QueueEntry(
 
 data class QueueSnapshot(val running: Boolean, val cancelling: Boolean, val items: List<QueueEntry>)
 
+data class EngineInfo(val ytdlp: String, val pending: String, val gallery: String)
+data class UpdateInfo(val status: String, val current: String, val latest: String, val message: String)
+
 data class VkLoginResult(val ok: Boolean, val token: String = "", val name: String = "", val error: String = "")
 
 /** Единственная точка доступа к Python-ядру (модуль mh_android). Вызовы могут блокироваться: не из UI-потока. */
@@ -38,7 +41,7 @@ object Bridge {
         if (!Python.isStarted()) Python.start(AndroidPlatform(app))
         val m = Python.getInstance().getModule("mh_android")
         val ffmpeg = Ffmpeg.prepare(app)
-        m.callAttr("init", app.filesDir.absolutePath, stagingDir(app).absolutePath, ffmpeg?.binDir ?: "", ffmpeg?.libDir ?: "")
+        m.callAttr("init", app.filesDir.absolutePath, stagingDir(app).absolutePath, ffmpeg?.binDir ?: "", ffmpeg?.libDir ?: "", Settings.autoUpdate(app))
         module = m
         return m
     }
@@ -57,6 +60,18 @@ object Bridge {
     }
 
     fun addLinks(context: Context, text: String): Int = mod(context).callAttr("add_links", text).toInt()
+    fun engineInfo(context: Context): EngineInfo {
+        val o = JSONObject(mod(context).callAttr("engine_versions").toString())
+        return EngineInfo(o.optString("ytdlp"), o.optString("pending"), o.optString("gallery_dl"))
+    }
+
+    fun updateYtdlp(context: Context): UpdateInfo {
+        val o = JSONObject(mod(context).callAttr("update_ytdlp").toString())
+        return UpdateInfo(o.optString("status"), o.optString("current"), o.optString("latest"), o.optString("message"))
+    }
+
+    fun logTail(context: Context): String = mod(context).callAttr("log_tail").toString()
+
     fun setCookies(context: Context, path: String) { mod(context).callAttr("set_cookies", path) }
 
     fun vkAuthUrl(context: Context): String = mod(context).callAttr("vk_auth_url").toString()

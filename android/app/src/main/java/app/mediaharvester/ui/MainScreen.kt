@@ -54,12 +54,18 @@ import app.mediaharvester.ItemStatus
 import app.mediaharvester.MainViewModel
 import app.mediaharvester.QueueEntry
 import app.mediaharvester.R
+import app.mediaharvester.Tab
 import app.mediaharvester.UiState
 
 private val palette @Composable get() = LocalPalette.current
 
 @Composable
 fun MainScreen(state: UiState, vm: MainViewModel) {
+    if (state.settingsOpen) {
+        androidx.activity.compose.BackHandler { vm.openSettings(false) }
+        SettingsScreen(state, vm)
+        return
+    }
     val p = palette
     val snackbar = remember { SnackbarHostState() }
     LaunchedEffect(state.notice) {
@@ -80,19 +86,30 @@ fun MainScreen(state: UiState, vm: MainViewModel) {
         ) {
             item { Header(state, vm) }
             item { ModeTabs(state, vm) }
-            if (state.tracksMode) {
-                item { TracksCard(state, vm) }
-            } else {
-                item { LinksCard(state, vm) }
-                item { QualityCard(state, vm) }
-                item { VkCard(state, vm) }
-                item { AccountsCard(state, vm) }
+            when (state.tab) {
+                Tab.TRACKS -> item { TracksCard(state, vm) }
+                Tab.LINKS -> {
+                    item { LinksCard(state, vm) }
+                    item { QualityCard(state, vm) }
+                    item { VkCard(state, vm) }
+                    item { AccountsCard(state, vm) }
+                }
+                Tab.HISTORY -> {}
             }
-            item { QueueHeader(state, vm) }
-            if (state.items.isEmpty()) {
-                item { EmptyQueue(state.ready) }
+            if (state.tab == Tab.HISTORY) {
+                item { HistoryHeader(state, vm) }
+                if (state.history.isEmpty()) {
+                    item { EmptyText("История пуста: здесь появятся завершённые загрузки.") }
+                } else {
+                    items(state.history, key = { it.time.toString() + it.url }) { HistoryRow(it, state, vm) }
+                }
             } else {
-                items(state.items, key = { it.id }) { QueueRow(it, state, vm) }
+                item { QueueHeader(state, vm) }
+                if (state.items.isEmpty()) {
+                    item { EmptyQueue(state.ready) }
+                } else {
+                    items(state.items, key = { it.id }) { QueueRow(it, state, vm) }
+                }
             }
         }
     }
@@ -109,8 +126,7 @@ private fun Header(state: UiState, vm: MainViewModel) {
             Text("MediaHarvester", style = MaterialTheme.typography.headlineSmall, color = p.text)
             if (state.version.isNotEmpty()) Text("v${state.version}", style = MaterialTheme.typography.bodySmall, color = p.textMuted)
         }
-        val label = when (state.theme) { "light" -> "Светлая"; "dark" -> "Тёмная"; else -> "Авто" }
-        Pill(label, onClick = vm::cycleTheme)
+        Pill("Настройки") { vm.openSettings(true) }
     }
 }
 
@@ -201,13 +217,13 @@ private fun ModeTabs(state: UiState, vm: MainViewModel) {
         Modifier.fillMaxWidth().clip(RoundedCornerShape(Dim.radiusControl)).background(p.secondary).padding(4.dp),
         horizontalArrangement = Arrangement.spacedBy(4.dp),
     ) {
-        listOf("Ссылки" to false, "Треки по списку" to true).forEach { (title, tracks) ->
-            val selected = state.tracksMode == tracks
+        listOf("Ссылки" to Tab.LINKS, "Треки" to Tab.TRACKS, "История" to Tab.HISTORY).forEach { (title, tab) ->
+            val selected = state.tab == tab
             Box(
                 Modifier.weight(1f).heightIn(min = 44.dp)
                     .clip(RoundedCornerShape(Dim.radiusControl - 2.dp))
                     .background(if (selected) p.card else Color.Transparent)
-                    .clickable { vm.setTracksMode(tracks) },
+                    .clickable { vm.setTab(tab) },
                 contentAlignment = Alignment.Center,
             ) {
                 Text(title, style = MaterialTheme.typography.labelLarge, color = if (selected) p.accent else p.textSecondary)
@@ -375,6 +391,168 @@ private fun QueueHeader(state: UiState, vm: MainViewModel) {
 }
 
 @Composable
+private fun EmptyText(text: String) {
+    Box(Modifier.fillMaxWidth().padding(vertical = 32.dp), contentAlignment = Alignment.Center) {
+        Text(text, style = MaterialTheme.typography.bodyMedium, color = palette.textMuted)
+    }
+}
+
+@Composable
+private fun HistoryHeader(state: UiState, vm: MainViewModel) {
+    val p = palette
+    Row(Modifier.fillMaxWidth().padding(top = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+        Text("История · ${state.history.size}", style = MaterialTheme.typography.titleMedium, color = p.text, modifier = Modifier.weight(1f))
+        if (state.history.isNotEmpty()) Pill("Очистить", onClick = vm::historyClear)
+    }
+}
+
+@Composable
+private fun HistoryRow(entry: app.mediaharvester.HistoryEntry, state: UiState, vm: MainViewModel) {
+    val p = palette
+    val whenText = remember(entry.time) {
+        java.text.SimpleDateFormat("d MMM, HH:mm", java.util.Locale.getDefault()).format(java.util.Date(entry.time))
+    }
+    Card {
+        Row(verticalAlignment = Alignment.Top) {
+            Column(Modifier.weight(1f)) {
+                Text(entry.label, style = MaterialTheme.typography.labelLarge, color = p.text, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(entry.url, style = MaterialTheme.typography.bodySmall, color = p.textMuted, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
+            IconButton(onClick = { vm.historyRemove(entry) }, modifier = Modifier.size(Dim.touch)) {
+                Icon(Icons.Default.Close, contentDescription = "Удалить из истории", tint = p.textMuted)
+            }
+        }
+        Spacer(Modifier.height(6.dp))
+        Text(
+            if (entry.ok) "$whenText · сохранено файлов: ${entry.files} (Загрузки/${entry.folder})" else "$whenText · ${entry.text}",
+            style = MaterialTheme.typography.bodySmall, color = if (entry.ok) p.green else p.danger,
+        )
+        if (!entry.isTracks) {
+            Spacer(Modifier.height(10.dp))
+            Button("Скачать ещё раз", Modifier.fillMaxWidth(), primary = false) { vm.historyRequeue(entry) }
+        }
+    }
+}
+
+@Composable
+private fun SettingsScreen(state: UiState, vm: MainViewModel) {
+    val p = palette
+    val context = androidx.compose.ui.platform.LocalContext.current
+    var folder by remember(state.folderName) { mutableStateOf(state.folderName) }
+    Scaffold(containerColor = p.bg) { inner ->
+        LazyColumn(
+            modifier = Modifier.fillMaxSize().padding(inner).statusBarsPadding(),
+            contentPadding = PaddingValues(Dim.gutter),
+            verticalArrangement = Arrangement.spacedBy(Dim.gap),
+        ) {
+            item {
+                Row(Modifier.fillMaxWidth().heightIn(min = 56.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Text("Настройки", style = MaterialTheme.typography.headlineSmall, color = p.text, modifier = Modifier.weight(1f))
+                    Pill("Назад") { vm.openSettings(false) }
+                }
+            }
+            item {
+                Card {
+                    Text("Оформление", style = MaterialTheme.typography.titleMedium, color = p.text)
+                    Spacer(Modifier.height(10.dp))
+                    Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        listOf("system" to "Как в системе", "light" to "Светлая", "dark" to "Тёмная").forEach { (mode, title) ->
+                            Pill(title, selected = state.theme == mode) { vm.setTheme(mode) }
+                        }
+                    }
+                }
+            }
+            item {
+                Card {
+                    Text("Загрузка", style = MaterialTheme.typography.titleMedium, color = p.text)
+                    Spacer(Modifier.height(10.dp))
+                    SwitchRow("Только по Wi-Fi", "Не качать через мобильный интернет", state.wifiOnly, vm::setWifiOnly)
+                    Spacer(Modifier.height(12.dp))
+                    Text("Папка в «Загрузках»", style = MaterialTheme.typography.labelLarge, color = p.text)
+                    Spacer(Modifier.height(6.dp))
+                    Box(
+                        Modifier.fillMaxWidth().clip(RoundedCornerShape(Dim.radiusControl)).background(p.inner)
+                            .border(BorderStroke(1.dp, p.innerBorder), RoundedCornerShape(Dim.radiusControl))
+                            .padding(horizontal = 12.dp, vertical = 12.dp),
+                    ) {
+                        BasicTextField(
+                            value = folder, onValueChange = { folder = it },
+                            singleLine = true,
+                            textStyle = MaterialTheme.typography.bodyLarge.copy(color = p.text),
+                            cursorBrush = SolidColor(p.accent),
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                    }
+                    Spacer(Modifier.height(8.dp))
+                    Button("Сохранить название", Modifier.fillMaxWidth(), primary = false) { vm.setFolderName(folder) }
+                    Text("Новые файлы попадут в Загрузки/${state.folderName}. Уже сохранённое остаётся на месте.",
+                        style = MaterialTheme.typography.bodySmall, color = p.textMuted, modifier = Modifier.padding(top = 6.dp))
+                }
+            }
+            item {
+                Card {
+                    Text("Движки загрузки", style = MaterialTheme.typography.titleMedium, color = p.text)
+                    Spacer(Modifier.height(6.dp))
+                    val e = state.engines
+                    Text(
+                        if (e == null) "Версии загружаются…" else
+                            "yt-dlp ${e.ytdlp}" + (if (e.pending.isNotEmpty()) " (скачана ${e.pending}: заработает после перезапуска)" else "") +
+                                "\ngallery-dl ${e.gallery}",
+                        style = MaterialTheme.typography.bodyMedium, color = p.textSecondary,
+                    )
+                    Spacer(Modifier.height(10.dp))
+                    SwitchRow("Обновлять yt-dlp автоматически", "Проверка раз в 12 часов при запуске", state.autoUpdate, vm::setAutoUpdate)
+                    Spacer(Modifier.height(10.dp))
+                    Button(if (state.updating) "Проверяю…" else "Проверить обновление yt-dlp", Modifier.fillMaxWidth(), primary = false) {
+                        if (!state.updating) vm.checkYtdlpUpdate()
+                    }
+                    if (state.updateStatus.isNotEmpty()) {
+                        Text(state.updateStatus, style = MaterialTheme.typography.bodySmall, color = p.textMuted, modifier = Modifier.padding(top = 6.dp))
+                    }
+                }
+            }
+            item {
+                Card {
+                    Text("Диагностика", style = MaterialTheme.typography.titleMedium, color = p.text)
+                    Spacer(Modifier.height(6.dp))
+                    Text("Если что-то не скачивается, отправьте журнал разработчику: токены и ключи в нём скрыты.",
+                        style = MaterialTheme.typography.bodySmall, color = p.textMuted)
+                    Spacer(Modifier.height(10.dp))
+                    Button("Поделиться журналом", Modifier.fillMaxWidth(), primary = false) {
+                        val send = android.content.Intent(android.content.Intent.ACTION_SEND)
+                            .setType("text/plain").putExtra(android.content.Intent.EXTRA_TEXT, vm.diagnostics())
+                        context.startActivity(android.content.Intent.createChooser(send, "Журнал MediaHarvester"))
+                    }
+                    Spacer(Modifier.height(10.dp))
+                    Button("Очистить временные файлы (${state.stagingBytes / 1024 / 1024} МБ)", Modifier.fillMaxWidth(), primary = false) {
+                        vm.clearStaging()
+                    }
+                }
+            }
+            item {
+                Text("MediaHarvester ${state.version}", style = MaterialTheme.typography.bodySmall, color = p.textMuted,
+                    modifier = Modifier.padding(vertical = 8.dp))
+            }
+        }
+    }
+}
+
+@Composable
+private fun SwitchRow(title: String, subtitle: String, checked: Boolean, onChange: (Boolean) -> Unit) {
+    val p = palette
+    Row(Modifier.fillMaxWidth().heightIn(min = Dim.touch).clickable { onChange(!checked) }, verticalAlignment = Alignment.CenterVertically) {
+        Column(Modifier.weight(1f).padding(end = 12.dp)) {
+            Text(title, style = MaterialTheme.typography.labelLarge, color = p.text)
+            Text(subtitle, style = MaterialTheme.typography.bodySmall, color = p.textMuted)
+        }
+        androidx.compose.material3.Switch(
+            checked = checked, onCheckedChange = onChange,
+            colors = androidx.compose.material3.SwitchDefaults.colors(checkedTrackColor = p.accent, checkedThumbColor = Color.White),
+        )
+    }
+}
+
+@Composable
 private fun EmptyQueue(ready: Boolean) {
     val p = palette
     Box(Modifier.fillMaxWidth().padding(vertical = 32.dp), contentAlignment = Alignment.Center) {
@@ -406,7 +584,7 @@ private fun QueueRow(item: QueueEntry, state: UiState, vm: MainViewModel) {
         val (line, color) = when (item.status) {
             ItemStatus.PENDING -> "В очереди" to p.textMuted
             ItemStatus.WORKING -> item.text.ifBlank { "Подготовка…" } to p.accentTintText
-            ItemStatus.DONE -> (if (saved != null) "Готово · сохранено файлов: $saved (Загрузки/MediaHarvester)" else "Готово · сохраняю…") to p.green
+            ItemStatus.DONE -> (if (saved != null) "Готово · сохранено файлов: $saved (Загрузки/${state.folderName})" else "Готово · сохраняю…") to p.green
             ItemStatus.ERROR -> item.message.ifBlank { "Ошибка" } to p.danger
             ItemStatus.CANCELLED -> "Отменено" to p.amber
         }
