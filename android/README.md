@@ -1,0 +1,30 @@
+# MediaHarvester для Android
+
+Интерфейс на Kotlin + Jetpack Compose в стиле версии для ПК, а загрузки выполняет то же Python-ядро
+(`../src/core`, `../src/utils`: yt-dlp, gallery-dl, анонимный разбор Instagram), запущенное внутри
+приложения через [Chaquopy](https://chaquo.com/chaquopy/). Мост между ними: `app/src/main/python/mh_android.py`.
+
+Версия приложения берётся из `../src/version.py`. Файлы сначала попадают во временную папку приложения,
+затем переносятся в «Загрузки/MediaHarvester» через MediaStore (отдельные разрешения не нужны).
+
+## Сборка
+
+Нужны JDK 17, Android SDK (platform 35, build-tools) и Python 3.13 с лаунчером `py` (только для сборки).
+В `local.properties` укажите `sdk.dir=...`.
+
+```bash
+./gradlew assembleDebug
+```
+
+APK: `app/build/outputs/apk/debug/app-debug.apk`. Быстрый цикл с эмулятором (пересборка + установка + запуск): `powershell -File dev.ps1`.
+Для релизной подписи положите `keystore.properties`
+(`storeFile`, `storePassword`, `keyAlias`, `keyPassword`) рядом с `settings.gradle.kts` и соберите `assembleRelease`.
+
+## Ограничения первой версии
+
+- Android 10+ (arm64 и x86_64).
+- FFmpeg идёт внутри APK (бинарники и общие библиотеки из youtubedl-android, см. `Ffmpeg.kt`): склейка HD-видео
+  и конвертация в MP3 работают как на компьютере. Из-за этого APK ≈ 125 МБ; позже можно разделить по архитектурам.
+- Фото VK: вход через браузер (кнопка «Войти», затем скопировать адрес страницы — токен подхватывается из буфера и
+  сразу очищается). Музыки VK и cookies пока нет.
+- «Треки по списку» работает: вкладка «Треки по списку», поиск на YouTube → MP3 с тегами; повторный запуск того же списка не плодит копии в «Загрузках».

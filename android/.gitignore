@@ -1,0 +1,10 @@
+.gradle/
+build/
+local.properties
+*.apk
+*.aab
+*.keystore
+*.jks
+.idea/
+captures/
+app/src/main/jniLibs/
