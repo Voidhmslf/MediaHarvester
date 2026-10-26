@@ -30,9 +30,19 @@ android {
         targetSdk = 35
         versionCode = 1
         versionName = appVersion
+    }
 
-        ndk {
-            abiFilters += listOf("arm64-v8a", "x86_64")
+    // Отдельный APK под каждую архитектуру (Chaquopy требует задавать их через flavors): телефон ставит arm64,
+    // эмулятор на ПК — x64. Общий APK не собирается: он вдвое больше, так как везёт Python и ffmpeg для обеих.
+    flavorDimensions += "abi"
+    productFlavors {
+        create("arm64") {
+            dimension = "abi"
+            ndk { abiFilters += "arm64-v8a" }
+        }
+        create("x64") {
+            dimension = "abi"
+            ndk { abiFilters += "x86_64" }
         }
     }
 

@@ -13,9 +13,9 @@ if (-not (& $adb devices | Select-String "emulator-\d+\s+device")) {
 
 Push-Location $PSScriptRoot
 try {
-    & .\gradlew.bat assembleDebug
+    & .\gradlew.bat assembleX64Debug
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-    & $adb install -r app\build\outputs\apk\debug\app-debug.apk
+    & $adb install -r app\build\outputs\apk\x64\debug\app-x64-debug.apk
     & $adb shell am start -n app.mediaharvester/.MainActivity
 } finally {
     Pop-Location

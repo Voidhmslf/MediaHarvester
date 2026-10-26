@@ -16,13 +16,15 @@
 ./gradlew assembleDebug
 ```
 
-APK: `app/build/outputs/apk/debug/app-debug.apk`. Быстрый цикл с эмулятором (пересборка + установка + запуск): `powershell -File dev.ps1`.
+Собираются два APK, по одному на архитектуру (каждый ≈ 100 МБ; общий был бы вдвое больше):
+`app/build/outputs/apk/arm64/debug/app-arm64-debug.apk` — для телефонов (arm64-v8a, это почти все современные),
+`app/build/outputs/apk/x64/debug/app-x64-debug.apk` — для эмулятора на ПК (x86_64). Быстрый цикл с эмулятором (пересборка + установка + запуск): `powershell -File dev.ps1`.
 Для релизной подписи положите `keystore.properties`
-(`storeFile`, `storePassword`, `keyAlias`, `keyPassword`) рядом с `settings.gradle.kts` и соберите `assembleRelease`.
+(`storeFile`, `storePassword`, `keyAlias`, `keyPassword`) рядом с `settings.gradle.kts` и соберите `assembleArm64Release`.
 
 ## Ограничения первой версии
 
-- Android 10+ (arm64 и x86_64).
+- Android 10+ (arm64-v8a для телефонов, x86_64 для эмулятора; 32-битные устройства не поддерживаются).
 - FFmpeg идёт внутри APK (бинарники и общие библиотеки из youtubedl-android, см. `Ffmpeg.kt`): склейка HD-видео
   и конвертация в MP3 работают как на компьютере. Из-за этого APK ≈ 125 МБ; позже можно разделить по архитектурам.
 - Фото VK: вход через браузер (кнопка «Войти», затем скопировать адрес страницы — токен подхватывается из буфера и
