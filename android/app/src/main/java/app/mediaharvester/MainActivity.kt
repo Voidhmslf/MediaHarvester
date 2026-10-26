@@ -45,12 +45,17 @@ class MainActivity : ComponentActivity() {
     /** После входа в браузере пользователь копирует адрес страницы: токен подхватывается из буфера при возврате. */
     override fun onWindowFocusChanged(hasFocus: Boolean) {
         super.onWindowFocusChanged(hasFocus)
-        if (!hasFocus || !viewModel.state.value.vkAwaiting) return
+        if (!hasFocus) return
+        // Читать буфер обмена Android разрешает только приложению, которое сейчас на экране
         val clipboard = getSystemService(CLIPBOARD_SERVICE) as android.content.ClipboardManager
         val text = clipboard.primaryClip?.takeIf { it.itemCount > 0 }?.getItemAt(0)?.text?.toString().orEmpty()
-        if ("access_token=" in text) {
-            viewModel.vkLogin(text)
-            clipboard.clearPrimaryClip() // токен не должен оставаться в буфере обмена
+        if (viewModel.state.value.vkAwaiting) {
+            if ("access_token=" in text) {
+                viewModel.vkLogin(text)
+                clipboard.clearPrimaryClip() // токен не должен оставаться в буфере обмена
+            }
+        } else if (text.isNotEmpty() && "access_token=" !in text) {
+            viewModel.offerClipboard(text)
         }
     }
 

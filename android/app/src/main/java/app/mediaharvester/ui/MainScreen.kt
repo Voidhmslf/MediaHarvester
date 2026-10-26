@@ -86,6 +86,7 @@ fun MainScreen(state: UiState, vm: MainViewModel) {
             verticalArrangement = Arrangement.spacedBy(Dim.gap),
         ) {
             item { Header(state, vm) }
+            if (state.clipLink.isNotEmpty()) item { ClipboardBanner(state, vm) }
             item { ModeTabs(state, vm) }
             when (state.tab) {
                 Tab.TRACKS -> item { TracksCard(state, vm) }
@@ -380,6 +381,23 @@ private fun AccountsCard(state: UiState, vm: MainViewModel) {
 }
 
 @Composable
+private fun ClipboardBanner(state: UiState, vm: MainViewModel) {
+    val p = palette
+    Column(
+        Modifier.fillMaxWidth().clip(RoundedCornerShape(Dim.radiusCard)).background(p.accentTint)
+            .padding(Dim.cardPadding),
+    ) {
+        Text("В буфере обмена ссылка", style = MaterialTheme.typography.labelLarge, color = p.accentTintText)
+        Text(state.clipLink, style = MaterialTheme.typography.bodySmall, color = p.accentTintText, maxLines = 2, overflow = TextOverflow.Ellipsis)
+        Spacer(Modifier.height(10.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            Button("В очередь", Modifier.weight(1f), primary = true) { vm.answerClipboard(true) }
+            Button("Скрыть", Modifier.weight(1f), primary = false) { vm.answerClipboard(false) }
+        }
+    }
+}
+
+@Composable
 private fun QueueHeader(state: UiState, vm: MainViewModel) {
     val p = palette
     Row(Modifier.fillMaxWidth().padding(top = 4.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -495,6 +513,21 @@ private fun SettingsScreen(state: UiState, vm: MainViewModel) {
                     Button("Сохранить название", Modifier.fillMaxWidth(), primary = false) { vm.setFolderName(folder) }
                     Text("Новые файлы попадут в Загрузки/${state.folderName}. Уже сохранённое остаётся на месте.",
                         style = MaterialTheme.typography.bodySmall, color = p.textMuted, modifier = Modifier.padding(top = 6.dp))
+                }
+            }
+            item {
+                Card {
+                    Text("Быстрое добавление", style = MaterialTheme.typography.titleMedium, color = p.text)
+                    Spacer(Modifier.height(10.dp))
+                    Text("«Поделиться» в другом приложении", style = MaterialTheme.typography.labelLarge, color = p.text)
+                    Spacer(Modifier.height(6.dp))
+                    Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        listOf("queue" to "В очередь", "download" to "Сразу скачать", "open" to "Открыть приложение").forEach { (mode, title) ->
+                            Pill(title, selected = state.shareMode == mode) { vm.setShareMode(mode) }
+                        }
+                    }
+                    Spacer(Modifier.height(10.dp))
+                    SwitchRow("Подсказка про ссылку в буфере", "При открытии предлагать добавить скопированную ссылку", state.clipboardPrompt, vm::setClipboardPrompt)
                 }
             }
             item {

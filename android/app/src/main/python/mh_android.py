@@ -379,14 +379,19 @@ def _out_dir() -> str:
 
 
 def _work(quality: str, workers: int = 1) -> None:
-    from collections import deque
     from src.core.download_queue import RUNNABLE
-    with _lock:
-        waiting = deque(it for it in _items if it["status"] in RUNNABLE)
+    taken: set[int] = set()
 
     def next_item() -> dict | None:
+        """Следующий нетронутый элемент; ссылки, добавленные уже во время загрузки, тоже попадают сюда."""
         with _lock:
-            return waiting.popleft() if waiting and not _cancel.is_set() else None
+            if _cancel.is_set():
+                return None
+            for it in _items:
+                if it["status"] in RUNNABLE and it["id"] not in taken:
+                    taken.add(it["id"])
+                    return it
+        return None
 
     def worker() -> None:
         while (it := next_item()) is not None:

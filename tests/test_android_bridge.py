@@ -257,6 +257,36 @@ class BridgeQueueTests(unittest.TestCase):
         for item, name in zip(items, ("a.mp4", "b.mp4", "c.mp4")):
             self.assertEqual([os.path.basename(f) for f in item["files"]], [name])  # чужих файлов нет
 
+    def test_links_added_during_a_run_are_picked_up(self):
+        self.bridge.add_links("https://youtu.be/a")
+        seen = []
+
+        def fake_one(url, quality, cb):
+            seen.append(url)
+            if url.endswith("/a"):
+                self.bridge.add_links("https://youtu.be/late")  # «Поделиться» посреди загрузки
+            return self.bridge._out_dir()
+
+        with mock.patch.object(self.bridge, "_download_one", fake_one):
+            self.bridge.start("Максимальное (Авто)")
+            self.bridge._thread.join(10)
+        self.assertEqual(seen, ["https://youtu.be/a", "https://youtu.be/late"])
+        self.assertEqual([i["status"] for i in self.snap()["items"]], ["done", "done"])
+
+    def test_failed_item_is_not_retried_in_the_same_run(self):
+        self.bridge.add_links("https://vk.com/album-1_2")
+        calls = []
+
+        def fake_one(url, quality, cb):
+            calls.append(url)
+            raise RuntimeError("ошибка")
+
+        with mock.patch.object(self.bridge, "_download_one", fake_one):
+            self.bridge.start("Максимальное (Авто)")
+            self.bridge._thread.join(10)
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(self.snap()["items"][0]["status"], "error")
+
     def test_workers_are_clamped_and_cancel_leaves_the_rest_pending(self):
         self.bridge.add_links("https://youtu.be/a https://youtu.be/b")
 

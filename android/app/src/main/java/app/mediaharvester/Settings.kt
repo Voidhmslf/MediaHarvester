@@ -8,6 +8,7 @@ import android.net.NetworkCapabilities
 object Settings {
     const val DEFAULT_FOLDER = "MediaHarvester"
     val AUDIO_CODECS = listOf("mp3", "m4a", "opus")
+    val SHARE_MODES = listOf("queue", "download", "open")
 
     private fun prefs(context: Context) =
         context.applicationContext.getSharedPreferences("settings", Context.MODE_PRIVATE)
@@ -33,6 +34,18 @@ object Settings {
     fun subtitleLangs(context: Context): String = prefs(context).getString("subtitle_langs", "ru,en").orEmpty().ifBlank { "ru,en" }
     fun setSubtitleLangs(context: Context, value: String) =
         prefs(context).edit().putString("subtitle_langs", value.filter { it.isLetterOrDigit() || it in ",-*." }.ifBlank { "ru,en" }).apply()
+
+    /** Что делать со ссылкой из «Поделиться»: queue — добавить и остаться в другом приложении, download — ещё и скачать, open — открыть MediaHarvester. */
+    fun shareMode(context: Context): String = prefs(context).getString("share_mode", "queue")?.takeIf { it in SHARE_MODES } ?: "queue"
+    fun setShareMode(context: Context, value: String) = prefs(context).edit().putString("share_mode", value).apply()
+
+    /** Предлагать добавить скопированную ссылку, когда приложение открывается. */
+    fun clipboardPrompt(context: Context): Boolean = prefs(context).getBoolean("clipboard_prompt", true)
+    fun setClipboardPrompt(context: Context, on: Boolean) = prefs(context).edit().putBoolean("clipboard_prompt", on).apply()
+
+    /** Последняя предложенная ссылка: одну и ту же не показываем дважды. */
+    fun lastOfferedClip(context: Context): String = prefs(context).getString("last_clip", "").orEmpty()
+    fun setLastOfferedClip(context: Context, value: String) = prefs(context).edit().putString("last_clip", value).apply()
 
     fun autoUpdate(context: Context): Boolean = prefs(context).getBoolean("auto_update", true)
     fun setAutoUpdate(context: Context, on: Boolean) = prefs(context).edit().putBoolean("auto_update", on).apply()

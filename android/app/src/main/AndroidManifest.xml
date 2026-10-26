@@ -25,7 +25,14 @@
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
-            <!-- Кнопка «Поделиться» в других приложениях: ссылка попадает в очередь -->
+        </activity>
+
+        <!-- Кнопка «Поделиться» в других приложениях: ссылка попадает в очередь, не открывая экран приложения -->
+        <activity
+            android:name=".ShareActivity"
+            android:exported="true"
+            android:excludeFromRecents="true"
+            android:theme="@style/Theme.MediaHarvester.Share">
             <intent-filter>
                 <action android:name="android.intent.action.SEND" />
                 <category android:name="android.intent.category.DEFAULT" />

@@ -36,6 +36,9 @@ data class UiState(
     val wifiOnly: Boolean = false,
     val parallel: Int = 1,
     val audioCodec: String = "mp3",
+    val shareMode: String = "queue",
+    val clipboardPrompt: Boolean = true,
+    val clipLink: String = "",
     val embedCover: Boolean = true,
     val subtitles: Boolean = false,
     val subtitleLangs: String = "ru,en",
@@ -59,6 +62,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private val _state = MutableStateFlow(UiState(
         theme = prefs.getString("theme", "system") ?: "system",
         wifiOnly = Settings.wifiOnly(app), parallel = Settings.parallel(app),
+        shareMode = Settings.shareMode(app), clipboardPrompt = Settings.clipboardPrompt(app),
         audioCodec = Settings.audioCodec(app), embedCover = Settings.embedCover(app),
         subtitles = Settings.subtitles(app), subtitleLangs = Settings.subtitleLangs(app), autoUpdate = Settings.autoUpdate(app), folderName = Settings.folderName(app),
     ))
@@ -137,6 +141,34 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     fun setWifiOnly(on: Boolean) {
         Settings.setWifiOnly(ctx, on)
         _state.update { it.copy(wifiOnly = on) }
+    }
+
+    fun setShareMode(value: String) {
+        Settings.setShareMode(ctx, value)
+        _state.update { it.copy(shareMode = Settings.shareMode(ctx)) }
+    }
+
+    fun setClipboardPrompt(on: Boolean) {
+        Settings.setClipboardPrompt(ctx, on)
+        _state.update { it.copy(clipboardPrompt = on, clipLink = if (on) it.clipLink else "") }
+    }
+
+    /** Ссылка из буфера обмена: предлагаем добавить, если она ещё не в очереди и мы её уже не предлагали. */
+    fun offerClipboard(text: String) {
+        val s = _state.value
+        if (!s.clipboardPrompt || !s.ready || s.settingsOpen) return
+        val link = Regex("""https?://\S+""").find(text)?.value?.trimEnd('.', ',', ')', '>', '"', '\'', ';').orEmpty()
+        if (link.isEmpty() || link == Settings.lastOfferedClip(ctx) || s.items.any { it.url == link }) return
+        _state.update { it.copy(clipLink = link) }
+    }
+
+    /** «В очередь» или «Скрыть» в подсказке: в обоих случаях эту ссылку больше не предлагаем. */
+    fun answerClipboard(add: Boolean) {
+        val link = _state.value.clipLink
+        if (link.isEmpty()) return
+        Settings.setLastOfferedClip(ctx, link)
+        _state.update { it.copy(clipLink = "") }
+        if (add) addLinks(link)
     }
 
     fun setAudioCodec(value: String) {
