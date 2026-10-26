@@ -188,6 +188,14 @@ class WrapperRoutingTests(unittest.TestCase):
         self.assertEqual(result, "gallery_dir")
         anon.assert_not_called()
 
+    def test_anonymous_first_even_with_login_when_requested(self):
+        result, anon, gallery = self.run_wrapper(self.POST, cookies_browser="Firefox", anonymous_first=True)
+        self.assertEqual(result, "anon_dir")
+        gallery.assert_not_called()
+        result, anon, gallery = self.run_wrapper(
+            self.POST, anon_result=ia.AnonymousAccessError("closed"), cookies_browser="Firefox", anonymous_first=True)
+        self.assertEqual(result, "gallery_dir")
+
     def test_anonymous_failure_falls_back_to_gallery_dl(self):
         result, anon, gallery = self.run_wrapper(self.POST, anon_result=ia.AnonymousAccessError("closed"))
         self.assertEqual(result, "gallery_dir")

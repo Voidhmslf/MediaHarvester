@@ -32,6 +32,8 @@ data class UiState(
     val vkLoggedIn: Boolean = false,
     val vkName: String = "",
     val vkAwaiting: Boolean = false,
+    val accounts: Set<String> = emptySet(),
+    val cookiesImported: Boolean = false,
 )
 
 class MainViewModel(app: Application) : AndroidViewModel(app) {
@@ -45,6 +47,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch(Dispatchers.Default) {
             val qualities = Bridge.qualities(ctx)
             val saved = prefs.getString("quality", null)
+            applyAccounts()
             val savedToken = prefs.getString("vk_token", "") ?: ""
             if (savedToken.isNotEmpty()) Bridge.vkLogin(ctx, savedToken, validate = false)
             _state.update {
@@ -91,6 +94,37 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val next = when (_state.value.theme) { "system" -> "light"; "light" -> "dark"; else -> "system" }
         prefs.edit().putString("theme", next).apply()
         _state.update { it.copy(theme = next) }
+    }
+
+    /** Пересобирает общий cookies.txt, отдаёт его движкам и обновляет статусы блока «Аккаунты». */
+    private fun applyAccounts() {
+        val path = Cookies.rebuild(ctx)
+        Bridge.setCookies(ctx, path)
+        _state.update {
+            it.copy(accounts = SITES.filter { s -> Cookies.isLoggedIn(ctx, s.id) }.map { s -> s.id }.toSet(),
+                cookiesImported = Cookies.hasImport(ctx))
+        }
+    }
+
+    fun accountsChanged(message: String?) = io {
+        applyAccounts()
+        message?.let { notice(it) }
+    }
+
+    fun accountLogout(id: String) = io {
+        Cookies.logout(ctx, id)
+        applyAccounts()
+    }
+
+    fun importCookies(uri: android.net.Uri) = io {
+        val count = Cookies.importFile(ctx, uri)
+        applyAccounts()
+        notice(if (count > 0) "Импортировано cookies: $count" else "Файл не похож на cookies.txt (формат Netscape)")
+    }
+
+    fun removeImportedCookies() = io {
+        Cookies.removeImport(ctx)
+        applyAccounts()
     }
 
     fun setVkAwaiting(on: Boolean) = _state.update { it.copy(vkAwaiting = on) }

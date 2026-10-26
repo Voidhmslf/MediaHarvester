@@ -15,16 +15,19 @@ def download_instagram(
     cookies_path: str = "",
     cookies_browser: str = "",
     status_callback: Callable[[str, str, float | None, str], None] | None = None,
-    cancel_event: threading.Event | None = None
+    cancel_event: threading.Event | None = None,
+    anonymous_first: bool = False,
 ) -> str:
     """
     Скачивает посты, карусели, фото, Reels и Stories из Instagram.
     Публичные посты и карусели сначала пробуются без входа (анонимный запрос, как у сайтов-загрузчиков),
     если cookies не заданы; всё остальное и запасной путь — gallery-dl с автоматическим fallback на yt-dlp для Reels / IGTV.
+    anonymous_first=True пробует публичный пост без входа, даже если вход задан (на телефоне: просроченная сессия
+    не должна ломать то, что открыто всем).
     Возвращает путь к папке с сохранёнными медиа.
     """
     has_login = bool(cookies_path and os.path.isfile(cookies_path)) or bool(browser_cookies.resolve(cookies_browser))
-    if is_post_url(url) and not has_login:
+    if is_post_url(url) and (anonymous_first or not has_login):
         try:
             return download_post_anonymously(url, download_path, status_callback, cancel_event)
         except AnonymousAccessError as e:

@@ -86,6 +86,7 @@ fun MainScreen(state: UiState, vm: MainViewModel) {
                 item { LinksCard(state, vm) }
                 item { QualityCard(state, vm) }
                 item { VkCard(state, vm) }
+                item { AccountsCard(state, vm) }
             }
             item { QueueHeader(state, vm) }
             if (state.items.isEmpty()) {
@@ -313,6 +314,50 @@ private fun VkCard(state: UiState, vm: MainViewModel) {
                     clipboard.getText()?.text?.takeIf { it.isNotBlank() }?.let { vm.vkLogin(it) }
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun AccountsCard(state: UiState, vm: MainViewModel) {
+    val p = palette
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val login = androidx.activity.compose.rememberLauncherForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.StartActivityForResult(),
+    ) { result -> vm.accountsChanged(result.data?.getStringExtra(app.mediaharvester.LoginActivity.EXTRA_MESSAGE)) }
+    val picker = androidx.activity.compose.rememberLauncherForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.OpenDocument(),
+    ) { uri -> uri?.let { vm.importCookies(it) } }
+    Card {
+        Text("Аккаунты", style = MaterialTheme.typography.titleMedium, color = p.text)
+        Spacer(Modifier.height(4.dp))
+        Text("Вход нужен для закрытых и возрастных материалов. Сессия хранится только на телефоне; пароль приложению не передаётся.",
+            style = MaterialTheme.typography.bodySmall, color = p.textMuted)
+        app.mediaharvester.SITES.forEach { site ->
+            val signedIn = site.id in state.accounts
+            Spacer(Modifier.height(12.dp))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f).padding(end = 10.dp)) {
+                    Text(site.name, style = MaterialTheme.typography.labelLarge, color = p.text)
+                    Text(if (signedIn) "Вход выполнен" else site.note,
+                        style = MaterialTheme.typography.bodySmall, color = if (signedIn) p.green else p.textMuted)
+                }
+                Pill(if (signedIn) "Выйти" else "Войти", selected = !signedIn) {
+                    if (signedIn) {
+                        vm.accountLogout(site.id)
+                    } else {
+                        login.launch(android.content.Intent(context, app.mediaharvester.LoginActivity::class.java)
+                            .putExtra(app.mediaharvester.LoginActivity.EXTRA_SITE, site.id))
+                    }
+                }
+            }
+        }
+        Spacer(Modifier.height(14.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            Button(if (state.cookiesImported) "Файл загружен" else "Импорт cookies.txt", Modifier.weight(1f), primary = false) {
+                picker.launch(arrayOf("text/plain", "text/*", "application/octet-stream"))
+            }
+            if (state.cookiesImported) Button("Убрать файл", Modifier.weight(1f), primary = false) { vm.removeImportedCookies() }
         }
     }
 }

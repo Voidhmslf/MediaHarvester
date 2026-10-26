@@ -91,6 +91,44 @@ class BridgeQueueTests(unittest.TestCase):
             self.bridge._thread.join(10)
         self.assertEqual(self.snap()["items"][0]["files"], [leftover])
 
+    def test_cookies_path_reaches_every_engine(self):
+        cookies = os.path.join(self.bridge._staging, "cookies.txt")
+        with open(cookies, "w") as f:
+            f.write("# Netscape HTTP Cookie File\n")
+        self.bridge.set_cookies(cookies)
+        cb = lambda *a: None
+        import src.core.gallery_engine as ge
+        import src.core.insta_engine as ie
+        import src.core.ytdlp_engine as ye
+        seen = {}
+
+        def spy(name, result):
+            def fake(**kw):
+                seen[name] = kw["cookies_path"]
+                return result
+            return fake
+
+        with mock.patch.object(ie, "download_instagram", spy("insta", "/o")), \
+             mock.patch.object(ge, "download_gallery", spy("gallery", "/o")), \
+             mock.patch.object(ye, "download_video", spy("video", "t")):
+            self.bridge._download_one("https://www.instagram.com/p/AbC/", "q", cb)
+            self.bridge._download_one("https://www.pinterest.com/pin/1/", "q", cb)
+            self.bridge._download_one("https://youtu.be/xyz", "q", cb)
+        self.assertEqual(seen, {"insta": cookies, "gallery": cookies, "video": cookies})
+        self.bridge.set_cookies("/нет/такого/файла")
+        self.assertEqual(self.bridge._cookies_path, "")
+
+    def test_cookie_advice_replaces_desktop_hints(self):
+        message, hint = self.bridge._android_text(
+            "Требуется авторизация Instagram: укажите cookies.txt или выберите браузер в блоке Cookies (лимит)",
+            "Укажите cookies.txt из браузера")
+        self.assertEqual(message, "Требуется авторизация Instagram")
+        self.assertIn("Аккаунты", hint)
+        self.assertEqual(self.bridge._android_text("Видео недоступно", "Проверьте ссылку"),
+                         ("Видео недоступно", "Проверьте ссылку"))
+        self.assertIn("Аккаунты", self.bridge._android_text("Нужен вход в аккаунт или доступ закрыт",
+                                                            "Укажите cookies.txt из браузера")[1])
+
     def test_tracklist_becomes_single_queue_item(self):
         text = "1. Queen - Bohemian Rhapsody\n# коммент\nABBA — Waterloo\n"
         self.assertEqual(self.bridge.add_tracks(text), 2)

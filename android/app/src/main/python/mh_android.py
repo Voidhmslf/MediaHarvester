@@ -16,6 +16,7 @@ _cancel = threading.Event()
 _thread: threading.Thread | None = None
 _staging = ""
 _vk_token = ""
+_cookies_path = ""
 
 
 def init(data_dir: str, staging_dir: str, ffmpeg_dir: str = "", ffmpeg_libs: str = "") -> None:
@@ -71,6 +72,27 @@ def vk_login(text: str, validate: bool = True) -> str:
     with _lock:
         _vk_token = token
     return json.dumps({"ok": True, "token": token, "name": name}, ensure_ascii=False)
+
+
+def set_cookies(path: str) -> None:
+    """Файл cookies.txt (Netscape) с входами пользователя; пустая строка — без входа."""
+    global _cookies_path
+    with _lock:
+        _cookies_path = path if path and os.path.isfile(path) else ""
+
+
+_COOKIE_ADVICE = "Войдите в этот сервис в блоке «Аккаунты» на вкладке «Ссылки»."
+
+
+def _android_text(message: str, hint: str) -> tuple[str, str]:
+    """Подсказки ядра про cookies.txt/браузер написаны для компьютера: на телефоне ведём в блок «Аккаунты»."""
+    import re
+    if re.search(r"cookies|браузер", message, re.IGNORECASE):
+        message = re.split(r"[:.]?\s*(?:[Уу]кажите|[Зз]акройте|[Вв]ыберите)", message, maxsplit=1)[0].strip() or message
+        hint = _COOKIE_ADVICE
+    elif re.search(r"cookies", hint, re.IGNORECASE):
+        hint = _COOKIE_ADVICE
+    return message, hint
 
 
 def vk_logout() -> None:
@@ -182,7 +204,8 @@ def _work(quality: str) -> None:
     def sync() -> None:
         with _lock:
             for qi, it in pairs:
-                it["status"], it["message"], it["hint"], it["technical"] = qi.status, qi.message, qi.hint, qi.technical
+                message, hint = _android_text(qi.message, qi.hint)
+                it["status"], it["message"], it["hint"], it["technical"] = qi.status, message, hint, qi.technical
 
     qi_to_dict = {id(qi): it for qi, it in pairs}
 
@@ -214,7 +237,8 @@ def _work(quality: str) -> None:
 
 def _download_tracks(text: str, cb) -> str:
     from src.core.track_search import download_track_list
-    return download_track_list(text=text, download_path=_staging, progress_callback=cb, cancel_event=_cancel)
+    return download_track_list(text=text, download_path=_staging, progress_callback=cb,
+                               cookies_path=_cookies_path, cancel_event=_cancel)
 
 
 def _download_one(url: str, quality: str, cb) -> str:
@@ -235,14 +259,16 @@ def _download_one(url: str, quality: str, cb) -> str:
                                   progress_callback=cb, cancel_event=_cancel)
 
     if engine == "insta":
-        return download_instagram(url=url, download_path=_staging, status_callback=cb, cancel_event=_cancel)
+        return download_instagram(url=url, download_path=_staging, cookies_path=_cookies_path,
+                                  status_callback=cb, cancel_event=_cancel, anonymous_first=True)
     if engine == "gallery":
         return download_gallery(
             url=url, download_path=_staging, platform_name=gallery_platform_name(url) or "Gallery",
-            status_callback=cb, cancel_event=_cancel, listing=bool(detected.get("listing")))
+            cookies_path=_cookies_path, status_callback=cb, cancel_event=_cancel,
+            listing=bool(detected.get("listing")))
     title = download_video(
         url=url, download_path=_staging, quality_choice=quality, progress_callback=cb,
-        cancel_event=_cancel, allow_playlist=bool(detected.get("playlist")))
+        cookies_path=_cookies_path, cancel_event=_cancel, allow_playlist=bool(detected.get("playlist")))
     cb(f"Готово: {title[:40]}", "success", 1.0, "100%")
     return _staging
 

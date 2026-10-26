@@ -57,6 +57,8 @@ object Bridge {
     }
 
     fun addLinks(context: Context, text: String): Int = mod(context).callAttr("add_links", text).toInt()
+    fun setCookies(context: Context, path: String) { mod(context).callAttr("set_cookies", path) }
+
     fun vkAuthUrl(context: Context): String = mod(context).callAttr("vk_auth_url").toString()
     fun vkLogout(context: Context) { mod(context).callAttr("vk_logout") }
 
