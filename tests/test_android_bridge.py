@@ -35,6 +35,7 @@ class BridgeQueueTests(unittest.TestCase):
     def setUp(self):
         self.bridge = load_bridge()
         self.bridge._staging = tempfile.mkdtemp()
+        self.bridge._probe_enabled = False
 
     def snap(self):
         return json.loads(self.bridge.snapshot())
@@ -138,6 +139,51 @@ class BridgeQueueTests(unittest.TestCase):
         with mock.patch.object(up, "check_for_update", return_value=fake):
             res = json.loads(self.bridge.update_ytdlp())
         self.assertEqual((res["status"], res["latest"]), ("updated", "2026.02.02"))
+
+    def test_probe_fills_title_thumbnail_and_quality_options(self):
+        import src.core.ytdlp_engine as ye
+        self.bridge._probe_enabled = True
+        info = {"title": "Видео", "thumbnail": "https://i/x.jpg", "uploader": "Автор", "duration": 61,
+                "heights": [1080, 720, 360], "playlist": False}
+        with mock.patch.object(ye, "probe_media", return_value=info):
+            self.bridge.add_links("https://youtu.be/abc")
+            self.bridge._probe_pool.shutdown(wait=True)
+        (item,) = self.snap()["items"]
+        self.assertEqual((item["title"], item["thumbnail"], item["duration"]), ("Видео", "https://i/x.jpg", 61))
+        self.assertFalse(item["probing"])
+        self.assertEqual(item["quality_options"],
+                         ["Максимальное (Авто)", "Full HD (1080p)", "HD (720p)", "SD (480p)", "360p", "Только аудио (MP3)"])
+
+    def test_probe_failure_and_non_ytdlp_links_are_harmless(self):
+        import src.core.ytdlp_engine as ye
+        self.bridge._probe_enabled = True
+        with mock.patch.object(ye, "probe_media", side_effect=RuntimeError("нет сети")):
+            self.bridge.add_links("https://youtu.be/abc https://www.instagram.com/p/AbC/")
+            self.bridge._probe_pool.shutdown(wait=True)
+        yt, insta = self.snap()["items"]
+        self.assertEqual((yt["title"], yt["probing"]), ("", False))
+        self.assertIn("4K (2160p)", yt["quality_options"])  # неизвестно -> предлагаем всё
+        self.assertEqual((insta["probing"], insta["quality_options"]), (False, []))
+
+    def test_item_quality_overrides_queue_quality(self):
+        import src.core.ytdlp_engine as ye
+        self.bridge._probe_enabled = True
+        with mock.patch.object(ye, "probe_media", return_value={
+                "title": "", "thumbnail": "", "uploader": "", "duration": 0, "heights": [], "playlist": False}):
+            self.bridge.add_links("https://youtu.be/a https://youtu.be/b")
+            self.bridge._probe_pool.shutdown(wait=True)
+        first = self.snap()["items"][0]["id"]
+        self.bridge.set_item_quality(first, "Только аудио (MP3)")
+        used = []
+
+        def fake_one(url, quality, cb):
+            used.append((url, quality))
+            return self.bridge._staging
+
+        with mock.patch.object(self.bridge, "_download_one", fake_one):
+            self.bridge.start("HD (720p)")
+            self.bridge._thread.join(10)
+        self.assertEqual(used, [("https://youtu.be/a", "Только аудио (MP3)"), ("https://youtu.be/b", "HD (720p)")])
 
     def test_tracklist_becomes_single_queue_item(self):
         text = "1. Queen - Bohemian Rhapsody\n# коммент\nABBA — Waterloo\n"

@@ -19,6 +19,7 @@ import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -415,7 +416,7 @@ private fun HistoryRow(entry: app.mediaharvester.HistoryEntry, state: UiState, v
     Card {
         Row(verticalAlignment = Alignment.Top) {
             Column(Modifier.weight(1f)) {
-                Text(entry.label, style = MaterialTheme.typography.labelLarge, color = p.text, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(entry.title.ifBlank { entry.label }, style = MaterialTheme.typography.labelLarge, color = p.text, maxLines = 2, overflow = TextOverflow.Ellipsis)
                 Text(entry.url, style = MaterialTheme.typography.bodySmall, color = p.textMuted, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
             IconButton(onClick = { vm.historyRemove(entry) }, modifier = Modifier.size(Dim.touch)) {
@@ -567,11 +568,37 @@ private fun EmptyQueue(ready: Boolean) {
 @Composable
 private fun QueueRow(item: QueueEntry, state: UiState, vm: MainViewModel) {
     val p = palette
+    val canPickQuality = !state.running && item.qualityOptions.isNotEmpty() &&
+        item.status in listOf(ItemStatus.PENDING, ItemStatus.ERROR, ItemStatus.CANCELLED)
     Card {
         Row(verticalAlignment = Alignment.Top) {
+            if (!item.isTracks) {
+                val thumb = rememberThumbnail(item.thumbnail)
+                Box(Modifier.size(width = 88.dp, height = 50.dp).clip(RoundedCornerShape(8.dp)).background(p.inner)) {
+                    if (thumb != null) {
+                        androidx.compose.foundation.Image(
+                            bitmap = thumb, contentDescription = null,
+                            contentScale = androidx.compose.ui.layout.ContentScale.Crop, modifier = Modifier.fillMaxSize(),
+                        )
+                    }
+                }
+                Spacer(Modifier.width(12.dp))
+            }
             Column(Modifier.weight(1f)) {
-                Text(item.label, style = MaterialTheme.typography.labelLarge, color = p.text, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                Text(item.url, style = MaterialTheme.typography.bodySmall, color = p.textMuted, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(item.title.ifBlank { item.label }, style = MaterialTheme.typography.labelLarge, color = p.text,
+                    maxLines = 2, overflow = TextOverflow.Ellipsis)
+                val meta = listOfNotNull(
+                    item.uploader.takeIf { it.isNotBlank() },
+                    item.duration.takeIf { it > 0 }?.let { "%d:%02d".format(it / 60, it % 60) },
+                ).joinToString(" · ")
+                Text(
+                    when {
+                        meta.isNotEmpty() -> meta
+                        item.probing -> "Загружаю сведения…"
+                        else -> item.url
+                    },
+                    style = MaterialTheme.typography.bodySmall, color = p.textMuted, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                )
             }
             if (!state.running) {
                 IconButton(onClick = { vm.remove(item.id) }, modifier = Modifier.size(Dim.touch).padding(0.dp)) {
@@ -591,6 +618,25 @@ private fun QueueRow(item: QueueEntry, state: UiState, vm: MainViewModel) {
         Text(line, style = MaterialTheme.typography.bodyMedium, color = color)
         if (item.status == ItemStatus.ERROR && item.hint.isNotBlank()) {
             Text(item.hint, style = MaterialTheme.typography.bodySmall, color = p.textSecondary, modifier = Modifier.padding(top = 4.dp))
+        }
+        if (canPickQuality) {
+            var open by remember { mutableStateOf(false) }
+            Spacer(Modifier.height(10.dp))
+            Box {
+                Pill("Качество: ${item.quality.ifBlank { "как для всех" }} ▾", selected = item.quality.isNotBlank()) { open = true }
+                androidx.compose.material3.DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+                    androidx.compose.material3.DropdownMenuItem(
+                        text = { Text("Как для всех: ${state.quality}") },
+                        onClick = { vm.setItemQuality(item.id, ""); open = false },
+                    )
+                    item.qualityOptions.forEach { option ->
+                        androidx.compose.material3.DropdownMenuItem(
+                            text = { Text(option) },
+                            onClick = { vm.setItemQuality(item.id, option); open = false },
+                        )
+                    }
+                }
+            }
         }
         if (item.status == ItemStatus.WORKING) {
             Spacer(Modifier.height(8.dp))

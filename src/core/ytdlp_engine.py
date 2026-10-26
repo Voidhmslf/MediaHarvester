@@ -66,15 +66,17 @@ def _apply_cookies(opts: dict[str, Any], cookies_path: str, cookies_browser: str
             opts["cookiesfrombrowser"] = from_browser
 
 
-def probe_video_quality(url: str, cookies_path: str = "", cookies_browser: str = "") -> tuple[list[int], str]:
+def probe_media(url: str, cookies_path: str = "", cookies_browser: str = "") -> dict[str, Any]:
     """
-    Получает список доступных разрешений по высоте и заголовок видео без его скачивания.
-    Возвращает (список_высот, заголовок).
+    Сведения о ссылке без скачивания: заголовок, обложка, автор, длительность и доступные высоты видео.
+    Для плейлистов и каналов берётся только их заголовок (без разбора каждого ролика).
     """
     opts: dict[str, Any] = {
         "noplaylist": True,
         "quiet": True,
         "no_warnings": True,
+        "extract_flat": "in_playlist",
+        "socket_timeout": 20,
     }
     if FFMPEG_PATH:
         opts["ffmpeg_location"] = FFMPEG_PATH
@@ -94,8 +96,27 @@ def probe_video_quality(url: str, cookies_path: str = "", cookies_browser: str =
         and not f.get("format_id", "").startswith(("sb", "storyboard"))
     ]
     heights = sorted(list(set(f.get("height") for f in video_formats if f.get("height"))), reverse=True)
-    title = info.get("title", "") if info else ""
-    return heights, title
+    info = info or {}
+    thumbnail = info.get("thumbnail") or ""
+    if not thumbnail and info.get("thumbnails"):
+        thumbnail = (info["thumbnails"][-1] or {}).get("url", "")
+    return {
+        "title": info.get("title", "") or "",
+        "thumbnail": thumbnail,
+        "uploader": info.get("uploader") or info.get("channel") or "",
+        "duration": info.get("duration") or 0,
+        "heights": heights,
+        "playlist": info.get("_type") == "playlist",
+    }
+
+
+def probe_video_quality(url: str, cookies_path: str = "", cookies_browser: str = "") -> tuple[list[int], str]:
+    """
+    Получает список доступных разрешений по высоте и заголовок видео без его скачивания.
+    Возвращает (список_высот, заголовок).
+    """
+    info = probe_media(url, cookies_path, cookies_browser)
+    return info["heights"], info["title"]
 
 
 def download_video(

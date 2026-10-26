@@ -17,6 +17,8 @@ _thread: threading.Thread | None = None
 _staging = ""
 _vk_token = ""
 _cookies_path = ""
+_probe_enabled = True  # тесты отключают сетевой разбор ссылок
+_probe_pool = None  # поток-пул для разбора ссылок (название, обложка, качества)
 
 
 def init(data_dir: str, staging_dir: str, ffmpeg_dir: str = "", ffmpeg_libs: str = "", auto_update: bool = True) -> None:
@@ -176,6 +178,7 @@ def add_links(text: str) -> int:
     from src.core.download_queue import parse_urls
     from src.core.router import detect_url_type
     added = 0
+    probe_ids: list[tuple[int, str]] = []
     with _lock:
         known = {it["url"] for it in _items}
         for url in parse_urls(text):
@@ -185,10 +188,76 @@ def add_links(text: str) -> int:
                 "id": _next_id, "url": url, "label": detect_url_type(url)["label"],
                 "status": "pending", "text": "", "progress": None, "message": "", "hint": "",
                 "technical": "", "files": [], "kind": "link",
+                "title": "", "thumbnail": "", "uploader": "", "duration": 0,
+                "quality": "", "quality_options": [], "probing": False,
             })
+            probe_ids.append((_next_id, url))
             _next_id += 1
             added += 1
+    for item_id, url in probe_ids:
+        _start_probe(item_id, url)
     return added
+
+
+_PRESET_HEIGHTS = (("4K (2160p)", 2160), ("2K (1440p)", 1440), ("Full HD (1080p)", 1080),
+                   ("HD (720p)", 720), ("SD (480p)", 480), ("360p", 360))
+AUTO_QUALITY = "Максимальное (Авто)"
+AUDIO_QUALITY = "Только аудио (MP3)"
+
+
+def quality_options(heights: list[int]) -> list[str]:
+    """Какие качества имеет смысл предлагать для ссылки: максимальное, доступные разрешения, звук."""
+    top = max(heights) if heights else 0
+    options = [AUTO_QUALITY]
+    options += [name for name, h in _PRESET_HEIGHTS if not top or top >= h * 0.9]
+    return options + [AUDIO_QUALITY]
+
+
+def _find(item_id: int) -> dict | None:
+    return next((it for it in _items if it["id"] == item_id), None)
+
+
+def _start_probe(item_id: int, url: str) -> None:
+    """Название, обложка и доступные качества ссылки — в фоне, не мешая ни вводу, ни загрузке."""
+    global _probe_pool
+    from concurrent.futures import ThreadPoolExecutor
+    from src.core.router import detect_url_type
+    if not _probe_enabled or detect_url_type(url)["engine"] != "ytdlp":
+        return
+    with _lock:
+        it = _find(item_id)
+        if it is not None:
+            it["probing"] = True
+        if _probe_pool is None:
+            _probe_pool = ThreadPoolExecutor(max_workers=2, thread_name_prefix="mh-probe")
+    _probe_pool.submit(_probe, item_id, url)
+
+
+def _probe(item_id: int, url: str) -> None:
+    try:
+        from src.core.ytdlp_engine import probe_media
+        info = probe_media(url, cookies_path=_cookies_path)
+    except Exception:
+        info = None
+    with _lock:
+        it = _find(item_id)
+        if it is None:
+            return
+        it["probing"] = False
+        if info:
+            it["title"], it["thumbnail"] = info["title"], info["thumbnail"]
+            it["uploader"], it["duration"] = info["uploader"], int(info["duration"] or 0)
+            it["quality_options"] = quality_options(info["heights"])
+        else:
+            it["quality_options"] = quality_options([])
+
+
+def set_item_quality(item_id: int, quality: str) -> None:
+    """Качество для одной ссылки; пустая строка — как выбрано для всей очереди."""
+    with _lock:
+        it = _find(item_id)
+        if it is not None and it["status"] not in ("working", "done"):
+            it["quality"] = quality
 
 
 def add_tracks(text: str) -> int:
@@ -270,7 +339,7 @@ def _work(quality: str) -> None:
             if it["kind"] == "tracks":
                 folder = _download_tracks(it["payload"], cb)
             else:
-                folder = _download_one(qi.url, quality, cb)
+                folder = _download_one(qi.url, it.get("quality") or quality, cb)
         finally:
             # Всё, что лежит во временной папке: сюда попадают и файлы, оставшиеся от отменённых или упавших
             # запусков (трек, скачанный до отмены, должен дойти до «Загрузок» при повторе). Очередь идёт

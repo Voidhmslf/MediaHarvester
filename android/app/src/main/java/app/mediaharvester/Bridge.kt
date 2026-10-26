@@ -21,6 +21,13 @@ data class QueueEntry(
     val hint: String,
     val files: List<String>,
     val isTracks: Boolean = false,
+    val title: String = "",
+    val thumbnail: String = "",
+    val uploader: String = "",
+    val duration: Int = 0,
+    val quality: String = "",
+    val qualityOptions: List<String> = emptyList(),
+    val probing: Boolean = false,
 )
 
 data class QueueSnapshot(val running: Boolean, val cancelling: Boolean, val items: List<QueueEntry>)
@@ -84,6 +91,7 @@ object Bridge {
     }
 
     fun addTracks(context: Context, text: String): Int = mod(context).callAttr("add_tracks", text).toInt()
+    fun setItemQuality(context: Context, id: Int, quality: String) { mod(context).callAttr("set_item_quality", id, quality) }
     fun remove(context: Context, id: Int) { mod(context).callAttr("remove", id) }
     fun clearFinished(context: Context) { mod(context).callAttr("clear_finished") }
     fun start(context: Context, quality: String): Boolean = mod(context).callAttr("start", quality).toBoolean()
@@ -106,6 +114,13 @@ object Bridge {
                 hint = o.optString("hint"),
                 files = List(files.length()) { files.getString(it) },
                 isTracks = o.optString("kind") == "tracks",
+                title = o.optString("title"),
+                thumbnail = o.optString("thumbnail"),
+                uploader = o.optString("uploader"),
+                duration = o.optInt("duration"),
+                quality = o.optString("quality"),
+                qualityOptions = o.optJSONArray("quality_options")?.let { qa -> List(qa.length()) { qa.getString(it) } }.orEmpty(),
+                probing = o.optBoolean("probing"),
             )
         }
         return QueueSnapshot(root.getBoolean("running"), root.getBoolean("cancelling"), items)

@@ -17,6 +17,7 @@ data class HistoryEntry(
     val files: Int,
     val isTracks: Boolean,
     val folder: String = Settings.DEFAULT_FOLDER,
+    val title: String = "",
 )
 
 /** Журнал завершённых загрузок (последние 200) в файле history.json; ссылки можно вернуть в очередь. */
@@ -40,6 +41,7 @@ object History {
                     o.getLong("time"), o.getString("url"), o.getString("label"), o.getBoolean("ok"),
                     o.optString("text"), o.optInt("files"), o.optBoolean("tracks"),
                     o.optString("folder").ifEmpty { Settings.DEFAULT_FOLDER },
+                    o.optString("title"),
                 )
             }
         } catch (e: Exception) {
@@ -58,7 +60,7 @@ object History {
             HistoryEntry(
                 time = now, url = it.url, label = it.label, ok = it.status == ItemStatus.DONE,
                 text = if (it.status == ItemStatus.DONE) "" else it.message.ifBlank { "Ошибка" },
-                files = saved[it.id] ?: 0, isTracks = it.isTracks, folder = Settings.folderName(context),
+                files = saved[it.id] ?: 0, isTracks = it.isTracks, folder = Settings.folderName(context), title = it.title,
             )
         }
         save(context, (added.reversed() + _entries.value).take(LIMIT))
@@ -75,7 +77,7 @@ object History {
         val arr = JSONArray()
         list.forEach {
             arr.put(JSONObject().put("time", it.time).put("url", it.url).put("label", it.label).put("ok", it.ok)
-                .put("text", it.text).put("files", it.files).put("tracks", it.isTracks).put("folder", it.folder))
+                .put("text", it.text).put("files", it.files).put("tracks", it.isTracks).put("folder", it.folder).put("title", it.title))
         }
         file(context).writeText(arr.toString())
     }
