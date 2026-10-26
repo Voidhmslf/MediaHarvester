@@ -19,8 +19,11 @@
 Собираются два APK, по одному на архитектуру (каждый ≈ 100 МБ; общий был бы вдвое больше):
 `app/build/outputs/apk/arm64/debug/app-arm64-debug.apk` — для телефонов (arm64-v8a, это почти все современные),
 `app/build/outputs/apk/x64/debug/app-x64-debug.apk` — для эмулятора на ПК (x86_64). Быстрый цикл с эмулятором (пересборка + установка + запуск): `powershell -File dev.ps1`.
-Для релизной подписи положите `keystore.properties`
-(`storeFile`, `storePassword`, `keyAlias`, `keyPassword`) рядом с `settings.gradle.kts` и соберите `assembleArm64Release`.
+Релизные (подписанные, со сжатием кода R8) APK собирает `./gradlew assembleRelease`: `app/build/outputs/apk/arm64/release/` (≈77 МБ)
+и `.../x64/release/` (≈80 МБ). Подпись берётся из `keystore.properties` рядом с `settings.gradle.kts`
+(`storeFile`, `storePassword`, `keyAlias`, `keyPassword`; файл в git не попадает). Ключ лежит вне репозитория
+(`~/android-dev/mediaharvester-release.jks`): **сохраните его копию и пароль** — без этого же ключа обновить
+установленное приложение нельзя. Debug-сборку поверх release (и наоборот) поставить нельзя: сначала удалите приложение.
 
 ## Ограничения первой версии
 
