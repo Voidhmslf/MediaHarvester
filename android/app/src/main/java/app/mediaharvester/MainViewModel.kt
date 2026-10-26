@@ -34,6 +34,8 @@ data class UiState(
     val settingsOpen: Boolean = false,
     val history: List<HistoryEntry> = emptyList(),
     val wifiOnly: Boolean = false,
+    val parallel: Int = 1,
+    val waitingWifi: Boolean = false,
     val autoUpdate: Boolean = true,
     val folderName: String = Settings.DEFAULT_FOLDER,
     val engines: EngineInfo? = null,
@@ -52,7 +54,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private val prefs = app.getSharedPreferences("settings", Context.MODE_PRIVATE)
     private val _state = MutableStateFlow(UiState(
         theme = prefs.getString("theme", "system") ?: "system",
-        wifiOnly = Settings.wifiOnly(app), autoUpdate = Settings.autoUpdate(app), folderName = Settings.folderName(app),
+        wifiOnly = Settings.wifiOnly(app), parallel = Settings.parallel(app), autoUpdate = Settings.autoUpdate(app), folderName = Settings.folderName(app),
     ))
     val state: StateFlow<UiState> = _state.asStateFlow()
 
@@ -79,7 +81,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 val snap = Bridge.snapshot(ctx)
                 _state.update {
                     it.copy(items = snap.items, running = snap.running, cancelling = snap.cancelling,
-                        saved = Exporter.saved.value, uris = Exporter.uris.value, history = History.entries.value)
+                        saved = Exporter.saved.value, uris = Exporter.uris.value, history = History.entries.value,
+                        waitingWifi = DownloadService.waitingForWifi.value)
                 }
                 delay(500)
             }
@@ -128,6 +131,11 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     fun setWifiOnly(on: Boolean) {
         Settings.setWifiOnly(ctx, on)
         _state.update { it.copy(wifiOnly = on) }
+    }
+
+    fun setParallel(value: Int) {
+        Settings.setParallel(ctx, value)
+        _state.update { it.copy(parallel = Settings.parallel(ctx)) }
     }
 
     fun setAutoUpdate(on: Boolean) {
@@ -272,18 +280,20 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     /** Старт или остановка. Ссылки, оставшиеся в поле, сначала добавляются в очередь. */
     fun toggleDownload() = io {
         val s = _state.value
-        if (!s.running) {
-            flushInput()
-            flushTracks()
+        if (s.running || s.waitingWifi) {
+            DownloadService.requestStop(ctx)
+            return@io
         }
-        if (s.running) {
-            Bridge.cancel(ctx)
-        } else if (s.wifiOnly && !Settings.onUnmeteredNetwork(ctx)) {
-            notice("Включён режим «Только по Wi-Fi»: подключитесь к Wi-Fi или выключите его в настройках")
-        } else if (Bridge.start(ctx, s.quality)) {
-            withContext(Dispatchers.Main) { DownloadService.start(ctx) }
-        } else {
+        flushInput()
+        flushTracks()
+        val runnable = Bridge.snapshot(ctx).items.any {
+            it.status == ItemStatus.PENDING || it.status == ItemStatus.ERROR || it.status == ItemStatus.CANCELLED
+        }
+        if (!runnable) {
             notice("Добавьте ссылки в очередь")
+        } else {
+            // Запуск очереди и ожидание Wi-Fi (если включён «Только по Wi-Fi») берёт на себя служба
+            withContext(Dispatchers.Main) { DownloadService.start(ctx, s.quality) }
         }
     }
 

@@ -14,6 +14,10 @@ object Settings {
     fun wifiOnly(context: Context): Boolean = prefs(context).getBoolean("wifi_only", false)
     fun setWifiOnly(context: Context, on: Boolean) = prefs(context).edit().putBoolean("wifi_only", on).apply()
 
+    /** Сколько ссылок качается одновременно (1–3). */
+    fun parallel(context: Context): Int = prefs(context).getInt("parallel", 1).coerceIn(1, 3)
+    fun setParallel(context: Context, value: Int) = prefs(context).edit().putInt("parallel", value.coerceIn(1, 3)).apply()
+
     fun autoUpdate(context: Context): Boolean = prefs(context).getBoolean("auto_update", true)
     fun setAutoUpdate(context: Context, on: Boolean) = prefs(context).edit().putBoolean("auto_update", on).apply()
 

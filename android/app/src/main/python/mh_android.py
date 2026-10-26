@@ -35,6 +35,7 @@ def init(data_dir: str, staging_dir: str, ffmpeg_dir: str = "", ffmpeg_libs: str
             os.environ["LD_LIBRARY_PATH"] = ffmpeg_libs + os.pathsep + os.environ.get("LD_LIBRARY_PATH", "")
         os.makedirs(staging_dir, exist_ok=True)
         _staging = staging_dir
+        _clean_item_dirs()
         from src.utils.logger import setup_logging
         setup_logging()
         # Загруженный раньше yt-dlp подключается ДО первого импорта yt_dlp (иначе останется версия из APK)
@@ -154,6 +155,18 @@ def log_tail() -> str:
     return read_log_tail(200)
 
 
+def _clean_item_dirs() -> None:
+    """Остатки прошлого сеанса (папки элементов 1, 2, …) удаляются: номера элементов начинаются заново."""
+    import shutil
+    try:
+        for name in os.listdir(_staging):
+            path = os.path.join(_staging, name)
+            if name.isdigit() and os.path.isdir(path):
+                shutil.rmtree(path, ignore_errors=True)
+    except OSError:
+        pass
+
+
 def version() -> str:
     from src.version import __version__
     return __version__
@@ -164,9 +177,9 @@ def qualities() -> str:
     return json.dumps(QUALITY_PRESETS, ensure_ascii=False)
 
 
-def _list_files() -> set[str]:
+def _list_files(folder: str = "") -> set[str]:
     found = set()
-    for root, _, names in os.walk(_staging):
+    for root, _, names in os.walk(folder or _staging):
         for name in names:
             if not name.endswith((".part", ".ytdl", ".temp")):
                 found.add(os.path.join(root, name))
@@ -330,15 +343,15 @@ def is_running() -> bool:
     return bool(_thread and _thread.is_alive())
 
 
-def start(quality: str) -> bool:
-    """Запускает очередь в фоновом потоке. False — уже идёт или нечего скачивать."""
+def start(quality: str, workers: int = 1) -> bool:
+    """Запускает очередь в фоне (workers — сколько ссылок качать одновременно). False — уже идёт или нечего качать."""
     global _thread
     from src.core.download_queue import RUNNABLE
     with _lock:
         if is_running() or not any(it["status"] in RUNNABLE for it in _items):
             return False
         _cancel.clear()
-        _thread = threading.Thread(target=_work, args=(quality,), name="mh-queue", daemon=True)
+        _thread = threading.Thread(target=_work, args=(quality, max(1, min(int(workers), 3))), name="mh-queue", daemon=True)
         _thread.start()
     return True
 
@@ -347,21 +360,50 @@ def cancel() -> None:
     _cancel.set()
 
 
-def _work(quality: str) -> None:
+_ctx = threading.local()
+
+
+def _out_dir() -> str:
+    """Временная папка текущего элемента: файлы разных ссылок не смешиваются, даже когда они качаются одновременно."""
+    return getattr(_ctx, "dir", "") or _staging
+
+
+def _work(quality: str, workers: int = 1) -> None:
+    from collections import deque
+    from src.core.download_queue import RUNNABLE
+    with _lock:
+        waiting = deque(it for it in _items if it["status"] in RUNNABLE)
+
+    def next_item() -> dict | None:
+        with _lock:
+            return waiting.popleft() if waiting and not _cancel.is_set() else None
+
+    def worker() -> None:
+        while (it := next_item()) is not None:
+            _run_item(it, quality)
+
+    threads = [threading.Thread(target=worker, name=f"mh-worker-{n}", daemon=True) for n in range(1, workers)]
+    for t in threads:
+        t.start()
+    worker()  # этот поток тоже работает, поэтому is_running() верно, пока идёт хоть один элемент
+    for t in threads:
+        t.join()
+
+
+def _run_item(it: dict, quality: str) -> None:
+    """Скачивает один элемент очереди; ошибки и отмена разбираются так же, как на компьютере (run_queue)."""
     from src.core.download_queue import QueueItem, run_queue
-    # run_queue работает с QueueItem; связываем их с записями очереди по порядку
-    pairs = [(QueueItem(url=it["url"], label=it["label"], status=it["status"]), it) for it in _items]
+    qi = QueueItem(url=it["url"], label=it["label"], status=it["status"])
+    item_dir = os.path.join(_staging, str(it["id"]))
+    os.makedirs(item_dir, exist_ok=True)
 
     def sync() -> None:
         with _lock:
-            for qi, it in pairs:
-                message, hint = _android_text(qi.message, qi.hint)
-                it["status"], it["message"], it["hint"], it["technical"] = qi.status, message, hint, qi.technical
-
-    qi_to_dict = {id(qi): it for qi, it in pairs}
+            message, hint = _android_text(qi.message, qi.hint)
+            it["status"], it["message"], it["hint"], it["technical"] = qi.status, message, hint, qi.technical
 
     def run_one(qi: QueueItem, number: int, total: int) -> str:
-        it = qi_to_dict[id(qi)]
+        _ctx.dir = item_dir
 
         def cb(text, state="idle", progress=None, percent_str=""):
             with _lock:
@@ -376,22 +418,22 @@ def _work(quality: str) -> None:
                     extra = {"playlist": bool(it["take_playlist"]), "limit": int(it["playlist_limit"])}
                 folder = _download_one(qi.url, it.get("quality") or quality, cb, **extra)
         finally:
-            # Всё, что лежит во временной папке: сюда попадают и файлы, оставшиеся от отменённых или упавших
-            # запусков (трек, скачанный до отмены, должен дойти до «Загрузок» при повторе). Очередь идёт
-            # по одному элементу, а экспорт удаляет уже сохранённое, так что чужого здесь нет.
+            # Всё, что лежит в папке элемента: сюда попадают и файлы, оставшиеся от отменённого запуска
+            # (трек, скачанный до отмены, должен дойти до «Загрузок» при повторе)
             with _lock:
-                it["files"] = sorted(_list_files())
+                it["files"] = sorted(_list_files(item_dir))
         return folder
 
     try:
-        run_queue([qi for qi, _ in pairs], run_one, _cancel, sync)
+        run_queue([qi], run_one, _cancel, sync)
     finally:
+        _ctx.dir = ""
         sync()
 
 
 def _download_tracks(text: str, cb) -> str:
     from src.core.track_search import download_track_list
-    return download_track_list(text=text, download_path=_staging, progress_callback=cb,
+    return download_track_list(text=text, download_path=_out_dir(), progress_callback=cb,
                                cookies_path=_cookies_path, cancel_event=_cancel)
 
 
@@ -409,24 +451,24 @@ def _download_one(url: str, quality: str, cb, playlist: bool | None = None, limi
         from src.core.vk_engine import download_vk_photos
         if not _vk_token:
             raise RuntimeError("Для фото ВКонтакте нужно войти: нажмите «Войти» в блоке «ВКонтакте · фото» на вкладке «Ссылки»")
-        return download_vk_photos(token_raw=_vk_token, url=url, download_path=_staging,
+        return download_vk_photos(token_raw=_vk_token, url=url, download_path=_out_dir(),
                                   progress_callback=cb, cancel_event=_cancel)
 
     if engine == "insta":
-        return download_instagram(url=url, download_path=_staging, cookies_path=_cookies_path,
+        return download_instagram(url=url, download_path=_out_dir(), cookies_path=_cookies_path,
                                   status_callback=cb, cancel_event=_cancel, anonymous_first=True)
     if engine == "gallery":
         return download_gallery(
-            url=url, download_path=_staging, platform_name=gallery_platform_name(url) or "Gallery",
+            url=url, download_path=_out_dir(), platform_name=gallery_platform_name(url) or "Gallery",
             cookies_path=_cookies_path, status_callback=cb, cancel_event=_cancel,
             listing=bool(detected.get("listing")))
     title = download_video(
-        url=url, download_path=_staging, quality_choice=quality, progress_callback=cb,
+        url=url, download_path=_out_dir(), quality_choice=quality, progress_callback=cb,
         cookies_path=_cookies_path, cancel_event=_cancel,
         allow_playlist=bool(detected.get("playlist")) if playlist is None else playlist,
         playlist_limit=limit if playlist else 0)
     cb(f"Готово: {title[:40]}", "success", 1.0, "100%")
-    return _staging
+    return _out_dir()
 
 
 def snapshot() -> str:

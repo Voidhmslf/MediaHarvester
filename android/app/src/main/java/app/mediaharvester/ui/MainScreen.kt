@@ -468,7 +468,13 @@ private fun SettingsScreen(state: UiState, vm: MainViewModel) {
                 Card {
                     Text("Загрузка", style = MaterialTheme.typography.titleMedium, color = p.text)
                     Spacer(Modifier.height(10.dp))
-                    SwitchRow("Только по Wi-Fi", "Не качать через мобильный интернет", state.wifiOnly, vm::setWifiOnly)
+                    SwitchRow("Только по Wi-Fi", "Ждать Wi-Fi и продолжить, когда он появится", state.wifiOnly, vm::setWifiOnly)
+                    Spacer(Modifier.height(12.dp))
+                    Text("Одновременно качать", style = MaterialTheme.typography.labelLarge, color = p.text)
+                    Spacer(Modifier.height(6.dp))
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        listOf(1, 2, 3).forEach { n -> Pill("$n", selected = state.parallel == n) { vm.setParallel(n) } }
+                    }
                     Spacer(Modifier.height(12.dp))
                     Text("Папка в «Загрузках»", style = MaterialTheme.typography.labelLarge, color = p.text)
                     Spacer(Modifier.height(6.dp))
@@ -711,11 +717,12 @@ private fun BottomAction(state: UiState, vm: MainViewModel) {
     ) {
         val label = when {
             state.cancelling -> "Останавливаю…"
+            state.waitingWifi -> "Жду Wi-Fi… Остановить"
             state.running -> "Остановить"
             pending > 0 -> "Скачать ($pending)"
             else -> "Скачать"
         }
-        Button(label, Modifier.fillMaxWidth().height(52.dp), primary = true, color = if (state.running) p.danger else null) {
+        Button(label, Modifier.fillMaxWidth().height(52.dp), primary = true, color = if (state.running || state.waitingWifi) p.danger else null) {
             if (!state.cancelling) vm.toggleDownload()
         }
     }

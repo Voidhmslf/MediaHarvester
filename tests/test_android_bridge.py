@@ -65,9 +65,9 @@ class BridgeQueueTests(unittest.TestCase):
             if "vk.com" in url:
                 raise RuntimeError("ВКонтакте пока доступен только в версии для компьютера")
             cb("Загрузка: 50%", "working", 0.5, "50%")
-            with open(os.path.join(staging, "clip.mp4"), "w") as f:
+            with open(os.path.join(self.bridge._out_dir(), "clip.mp4"), "w") as f:
                 f.write("x")
-            return staging
+            return self.bridge._out_dir()
 
         with mock.patch.object(self.bridge, "_download_one", fake_one):
             self.assertTrue(self.bridge.start("Максимальное (Авто)"))
@@ -80,7 +80,9 @@ class BridgeQueueTests(unittest.TestCase):
     def test_leftovers_from_cancelled_run_are_exported_with_next_item(self):
         self.bridge.add_links("https://youtu.be/ok")
         staging = self.bridge._staging
-        leftover = os.path.join(staging, "old_track.mp3")
+        item_dir = os.path.join(staging, str(self.snap()["items"][0]["id"]))
+        os.makedirs(item_dir)
+        leftover = os.path.join(item_dir, "old_track.mp3")
         with open(leftover, "w") as f:
             f.write("x")
 
@@ -226,6 +228,47 @@ class BridgeQueueTests(unittest.TestCase):
         tiktok, vimeo = self.snap()["items"]
         self.assertEqual((tiktok["playlist"], tiktok["playlist_count"]), (True, 42))
         self.assertEqual((vimeo["playlist"], vimeo["playlist_count"]), (True, 42))  # распознан по ответу yt-dlp
+
+    def test_parallel_workers_keep_files_apart_and_overlap(self):
+        import threading
+        import time
+        self.bridge.add_links("https://youtu.be/a https://youtu.be/b https://youtu.be/c")
+        started, peak, running = [], [0], [0]
+        gate = threading.Lock()
+
+        def fake_one(url, quality, cb):
+            with gate:
+                running[0] += 1
+                peak[0] = max(peak[0], running[0])
+            name = url.rsplit("/", 1)[1] + ".mp4"
+            with open(os.path.join(self.bridge._out_dir(), name), "w") as f:
+                f.write("x")
+            time.sleep(0.15)
+            with gate:
+                running[0] -= 1
+            return self.bridge._out_dir()
+
+        with mock.patch.object(self.bridge, "_download_one", fake_one):
+            self.assertTrue(self.bridge.start("Максимальное (Авто)", workers=2))
+            self.bridge._thread.join(10)
+        items = self.snap()["items"]
+        self.assertEqual([i["status"] for i in items], ["done"] * 3)
+        self.assertEqual(peak[0], 2)  # одновременно не больше двух
+        for item, name in zip(items, ("a.mp4", "b.mp4", "c.mp4")):
+            self.assertEqual([os.path.basename(f) for f in item["files"]], [name])  # чужих файлов нет
+
+    def test_workers_are_clamped_and_cancel_leaves_the_rest_pending(self):
+        self.bridge.add_links("https://youtu.be/a https://youtu.be/b")
+
+        def fake_one(url, quality, cb):
+            self.bridge.cancel()
+            from src.utils.helpers import DownloadCancelledError
+            raise DownloadCancelledError("stop")
+
+        with mock.patch.object(self.bridge, "_download_one", fake_one):
+            self.bridge.start("Максимальное (Авто)", workers=99)
+            self.bridge._thread.join(10)
+        self.assertEqual(sorted(i["status"] for i in self.snap()["items"]), ["cancelled", "pending"])
 
     def test_tracklist_becomes_single_queue_item(self):
         text = "1. Queen - Bohemian Rhapsody\n# коммент\nABBA — Waterloo\n"

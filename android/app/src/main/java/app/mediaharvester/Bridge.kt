@@ -103,7 +103,8 @@ object Bridge {
 
     fun remove(context: Context, id: Int) { mod(context).callAttr("remove", id) }
     fun clearFinished(context: Context) { mod(context).callAttr("clear_finished") }
-    fun start(context: Context, quality: String): Boolean = mod(context).callAttr("start", quality).toBoolean()
+    fun start(context: Context, quality: String, workers: Int = 1): Boolean =
+        mod(context).callAttr("start", quality, workers).toBoolean()
     fun cancel(context: Context) { mod(context).callAttr("cancel") }
 
     fun snapshot(context: Context): QueueSnapshot {
