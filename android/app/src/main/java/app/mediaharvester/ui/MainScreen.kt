@@ -569,8 +569,8 @@ private fun EmptyQueue(ready: Boolean) {
 @Composable
 private fun QueueRow(item: QueueEntry, state: UiState, vm: MainViewModel) {
     val p = palette
-    val canPickQuality = !state.running && item.qualityOptions.isNotEmpty() &&
-        item.status in listOf(ItemStatus.PENDING, ItemStatus.ERROR, ItemStatus.CANCELLED)
+    val editable = !state.running && item.status in listOf(ItemStatus.PENDING, ItemStatus.ERROR, ItemStatus.CANCELLED)
+    val canPickQuality = editable && item.qualityOptions.isNotEmpty()
     Card {
         Row(verticalAlignment = Alignment.Top) {
             if (!item.isTracks) {
@@ -622,6 +622,7 @@ private fun QueueRow(item: QueueEntry, state: UiState, vm: MainViewModel) {
         if (item.status == ItemStatus.ERROR && item.hint.isNotBlank()) {
             Text(item.hint, style = MaterialTheme.typography.bodySmall, color = p.textSecondary, modifier = Modifier.padding(top = 4.dp))
         }
+        if (editable && (item.playlist || item.playlistOptional)) PlaylistOptions(item, vm)
         if (canPickQuality) {
             var open by remember { mutableStateOf(false) }
             Spacer(Modifier.height(10.dp))
@@ -648,6 +649,40 @@ private fun QueueRow(item: QueueEntry, state: UiState, vm: MainViewModel) {
                 LinearProgressIndicator(progress = { progress.coerceIn(0f, 1f) }, modifier = Modifier.fillMaxWidth().height(6.dp).clip(RoundedCornerShape(3.dp)), color = p.accent, trackColor = p.secondary)
             } else {
                 LinearProgressIndicator(modifier = Modifier.fillMaxWidth().height(6.dp).clip(RoundedCornerShape(3.dp)), color = p.accent, trackColor = p.secondary)
+            }
+        }
+    }
+}
+
+@Composable
+private fun PlaylistOptions(item: QueueEntry, vm: MainViewModel) {
+    val p = palette
+    var open by remember { mutableStateOf(false) }
+    Spacer(Modifier.height(10.dp))
+    Row(Modifier.fillMaxWidth().heightIn(min = Dim.touch).clickable { vm.setItemPlaylist(item.id, !item.takePlaylist, item.playlistLimit) },
+        verticalAlignment = Alignment.CenterVertically) {
+        Column(Modifier.weight(1f).padding(end = 12.dp)) {
+            Text(if (item.playlist) "Весь список" else "Скачать весь плейлист", style = MaterialTheme.typography.labelLarge, color = p.text)
+            Text(
+                if (item.playlistCount > 0) "В списке видео: ${item.playlistCount}" else "Видео из этого списка по очереди",
+                style = MaterialTheme.typography.bodySmall, color = p.textMuted,
+            )
+        }
+        androidx.compose.material3.Switch(
+            checked = item.takePlaylist, onCheckedChange = { vm.setItemPlaylist(item.id, it, item.playlistLimit) },
+            colors = androidx.compose.material3.SwitchDefaults.colors(checkedTrackColor = p.accent, checkedThumbColor = Color.White),
+        )
+    }
+    if (item.takePlaylist) {
+        Box {
+            Pill("Сколько: ${if (item.playlistLimit == 0) "все" else "первые ${item.playlistLimit}"} ▾", selected = true) { open = true }
+            androidx.compose.material3.DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+                listOf(5, 10, 25, 50, 0).forEach { limit ->
+                    androidx.compose.material3.DropdownMenuItem(
+                        text = { Text(if (limit == 0) "Все видео" else "Первые $limit") },
+                        onClick = { vm.setItemPlaylist(item.id, true, limit); open = false },
+                    )
+                }
             }
         }
     }

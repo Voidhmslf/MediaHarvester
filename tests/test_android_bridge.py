@@ -185,6 +185,48 @@ class BridgeQueueTests(unittest.TestCase):
             self.bridge._thread.join(10)
         self.assertEqual(used, [("https://youtu.be/a", "Только аудио (MP3)"), ("https://youtu.be/b", "HD (720p)")])
 
+    def test_playlist_defaults_for_youtube_links(self):
+        self.bridge.add_links(
+            "https://www.youtube.com/playlist?list=PLabc "
+            "https://www.youtube.com/@channel "
+            "https://www.youtube.com/watch?v=abc&list=PLxyz "
+            "https://www.youtube.com/watch?v=solo")
+        pl, ch, inside, solo = self.snap()["items"]
+        self.assertEqual((pl["playlist"], pl["take_playlist"], pl["playlist_optional"]), (True, True, False))
+        self.assertEqual((ch["playlist"], ch["take_playlist"]), (True, True))
+        self.assertEqual((inside["playlist"], inside["take_playlist"], inside["playlist_optional"]), (False, False, True))
+        self.assertEqual((solo["playlist"], solo["playlist_optional"], solo["playlist_limit"]), (False, False, 0))
+        self.assertEqual(pl["playlist_limit"], 25)
+
+    def test_playlist_choice_reaches_the_engine(self):
+        self.bridge.add_links("https://www.youtube.com/watch?v=abc&list=PLxyz https://youtu.be/solo")
+        inside, solo = self.snap()["items"]
+        self.bridge.set_item_playlist(inside["id"], True, 10)
+        self.bridge.set_item_playlist(inside["id"], True, 7)  # недопустимый предел игнорируется
+        calls = []
+
+        def fake_one(url, quality, cb, **kw):
+            calls.append((url, kw))
+            return self.bridge._staging
+
+        with mock.patch.object(self.bridge, "_download_one", fake_one):
+            self.bridge.start("Максимальное (Авто)")
+            self.bridge._thread.join(10)
+        self.assertEqual(calls, [("https://www.youtube.com/watch?v=abc&list=PLxyz", {"playlist": True, "limit": 10}),
+                                 ("https://youtu.be/solo", {})])
+
+    def test_probe_marks_playlists_with_their_size(self):
+        import src.core.ytdlp_engine as ye
+        self.bridge._probe_enabled = True
+        info = {"title": "Мой плейлист", "thumbnail": "", "uploader": "Автор", "duration": 0, "heights": [],
+                "playlist": True, "playlist_count": 42}
+        with mock.patch.object(ye, "probe_media", return_value=info):
+            self.bridge.add_links("https://www.tiktok.com/@user https://vimeo.com/channels/x")
+            self.bridge._probe_pool.shutdown(wait=True)
+        tiktok, vimeo = self.snap()["items"]
+        self.assertEqual((tiktok["playlist"], tiktok["playlist_count"]), (True, 42))
+        self.assertEqual((vimeo["playlist"], vimeo["playlist_count"]), (True, 42))  # распознан по ответу yt-dlp
+
     def test_tracklist_becomes_single_queue_item(self):
         text = "1. Queen - Bohemian Rhapsody\n# коммент\nABBA — Waterloo\n"
         self.assertEqual(self.bridge.add_tracks(text), 2)
@@ -260,6 +302,34 @@ class InProcessGalleryDlTests(unittest.TestCase):
         cancel.set()
         with self.assertRaises(DownloadCancelledError):
             run_gallery_dl(["--version"], [], [], cancel)
+
+
+class PlaylistLimitTests(unittest.TestCase):
+    def run_download(self, **kwargs):
+        captured = {}
+
+        class FakeYDL:
+            def __init__(self, opts):
+                captured.update(opts)
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                return False
+
+            def extract_info(self, url, download=True):
+                return {"title": "Список"}
+
+        with mock.patch.object(ytdlp_engine.yt_dlp, "YoutubeDL", FakeYDL):
+            ytdlp_engine.download_video("https://youtu.be/x", "dl", "Максимальное (Авто)", lambda *a: None, **kwargs)
+        return captured
+
+    def test_limit_applies_only_to_playlists(self):
+        opts = self.run_download(allow_playlist=True, playlist_limit=5)
+        self.assertEqual((opts["playlistend"], opts["noplaylist"]), (5, False))
+        self.assertNotIn("playlistend", self.run_download(allow_playlist=True))
+        self.assertNotIn("playlistend", self.run_download(allow_playlist=False, playlist_limit=5))
 
 
 if __name__ == "__main__":

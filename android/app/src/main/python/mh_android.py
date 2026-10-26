@@ -5,6 +5,7 @@ Kotlin вызывает функции модуля через Chaquopy и оп�
 """
 import json
 import os
+import re
 import threading
 import time
 
@@ -190,6 +191,7 @@ def add_links(text: str) -> int:
                 "technical": "", "files": [], "kind": "link",
                 "title": "", "thumbnail": "", "uploader": "", "duration": 0,
                 "quality": "", "quality_options": [], "probing": False,
+                **_playlist_defaults(url),
             })
             probe_ids.append((_next_id, url))
             _next_id += 1
@@ -197,6 +199,33 @@ def add_links(text: str) -> int:
     for item_id, url in probe_ids:
         _start_probe(item_id, url)
     return added
+
+
+_YT_LIST = re.compile(r"[?&]list=([\w-]+)")
+_YT_COLLECTION_PATH = re.compile(r"youtube\.com/(?:playlist|@[^/]+|channel/|c/|user/)", re.IGNORECASE)
+PLAYLIST_LIMITS = (0, 5, 10, 25, 50)  # 0 — без ограничения
+
+
+def _playlist_defaults(url: str) -> dict:
+    """
+    Что делать со ссылкой, ведущей на список: «целиком» по умолчанию для плейлиста/канала/профиля,
+    «по желанию» для видео внутри плейлиста (watch?v=…&list=…).
+    """
+    from src.core.router import detect_url_type
+    whole = bool(detect_url_type(url).get("playlist")) or bool(_YT_COLLECTION_PATH.search(url))
+    optional = (not whole) and bool(_YT_LIST.search(url)) and "youtu" in url.lower()
+    return {
+        "playlist": whole, "playlist_optional": optional, "take_playlist": whole,
+        "playlist_limit": 25 if whole or optional else 0, "playlist_count": 0,
+    }
+
+
+def set_item_playlist(item_id: int, take: bool, limit: int) -> None:
+    """Качать ли всю ссылку как список и сколько первых видео (0 — все)."""
+    with _lock:
+        it = _find(item_id)
+        if it is not None and it["status"] not in ("working", "done") and limit in PLAYLIST_LIMITS:
+            it["take_playlist"], it["playlist_limit"] = bool(take), int(limit)
 
 
 _PRESET_HEIGHTS = (("4K (2160p)", 2160), ("2K (1440p)", 1440), ("Full HD (1080p)", 1080),
@@ -247,6 +276,9 @@ def _probe(item_id: int, url: str) -> None:
         if info:
             it["title"], it["thumbnail"] = info["title"], info["thumbnail"]
             it["uploader"], it["duration"] = info["uploader"], int(info["duration"] or 0)
+            it["playlist_count"] = int(info.get("playlist_count") or 0)
+            if info.get("playlist"):
+                it["playlist"] = True
             it["quality_options"] = quality_options(info["heights"])
         else:
             it["quality_options"] = quality_options([])
@@ -339,7 +371,10 @@ def _work(quality: str) -> None:
             if it["kind"] == "tracks":
                 folder = _download_tracks(it["payload"], cb)
             else:
-                folder = _download_one(qi.url, it.get("quality") or quality, cb)
+                extra = {}
+                if it.get("playlist") or it.get("playlist_optional"):
+                    extra = {"playlist": bool(it["take_playlist"]), "limit": int(it["playlist_limit"])}
+                folder = _download_one(qi.url, it.get("quality") or quality, cb, **extra)
         finally:
             # Всё, что лежит во временной папке: сюда попадают и файлы, оставшиеся от отменённых или упавших
             # запусков (трек, скачанный до отмены, должен дойти до «Загрузок» при повторе). Очередь идёт
@@ -360,7 +395,7 @@ def _download_tracks(text: str, cb) -> str:
                                cookies_path=_cookies_path, cancel_event=_cancel)
 
 
-def _download_one(url: str, quality: str, cb) -> str:
+def _download_one(url: str, quality: str, cb, playlist: bool | None = None, limit: int = 0) -> str:
     from src.core.gallery_engine import download_gallery
     from src.core.insta_engine import download_instagram
     from src.core.router import detect_url_type, gallery_platform_name
@@ -387,7 +422,9 @@ def _download_one(url: str, quality: str, cb) -> str:
             listing=bool(detected.get("listing")))
     title = download_video(
         url=url, download_path=_staging, quality_choice=quality, progress_callback=cb,
-        cookies_path=_cookies_path, cancel_event=_cancel, allow_playlist=bool(detected.get("playlist")))
+        cookies_path=_cookies_path, cancel_event=_cancel,
+        allow_playlist=bool(detected.get("playlist")) if playlist is None else playlist,
+        playlist_limit=limit if playlist else 0)
     cb(f"Готово: {title[:40]}", "success", 1.0, "100%")
     return _staging
 

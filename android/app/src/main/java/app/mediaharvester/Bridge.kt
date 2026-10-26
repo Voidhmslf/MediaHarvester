@@ -28,6 +28,11 @@ data class QueueEntry(
     val quality: String = "",
     val qualityOptions: List<String> = emptyList(),
     val probing: Boolean = false,
+    val playlist: Boolean = false,
+    val playlistOptional: Boolean = false,
+    val takePlaylist: Boolean = false,
+    val playlistLimit: Int = 0,
+    val playlistCount: Int = 0,
 )
 
 data class QueueSnapshot(val running: Boolean, val cancelling: Boolean, val items: List<QueueEntry>)
@@ -92,6 +97,10 @@ object Bridge {
 
     fun addTracks(context: Context, text: String): Int = mod(context).callAttr("add_tracks", text).toInt()
     fun setItemQuality(context: Context, id: Int, quality: String) { mod(context).callAttr("set_item_quality", id, quality) }
+    fun setItemPlaylist(context: Context, id: Int, take: Boolean, limit: Int) {
+        mod(context).callAttr("set_item_playlist", id, take, limit)
+    }
+
     fun remove(context: Context, id: Int) { mod(context).callAttr("remove", id) }
     fun clearFinished(context: Context) { mod(context).callAttr("clear_finished") }
     fun start(context: Context, quality: String): Boolean = mod(context).callAttr("start", quality).toBoolean()
@@ -121,6 +130,11 @@ object Bridge {
                 quality = o.optString("quality"),
                 qualityOptions = o.optJSONArray("quality_options")?.let { qa -> List(qa.length()) { qa.getString(it) } }.orEmpty(),
                 probing = o.optBoolean("probing"),
+                playlist = o.optBoolean("playlist"),
+                playlistOptional = o.optBoolean("playlist_optional"),
+                takePlaylist = o.optBoolean("take_playlist"),
+                playlistLimit = o.optInt("playlist_limit"),
+                playlistCount = o.optInt("playlist_count"),
             )
         }
         return QueueSnapshot(root.getBoolean("running"), root.getBoolean("cancelling"), items)

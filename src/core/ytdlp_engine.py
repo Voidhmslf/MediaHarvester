@@ -107,6 +107,7 @@ def probe_media(url: str, cookies_path: str = "", cookies_browser: str = "") -> 
         "duration": info.get("duration") or 0,
         "heights": heights,
         "playlist": info.get("_type") == "playlist",
+        "playlist_count": info.get("playlist_count") or len(info.get("entries") or []),
     }
 
 
@@ -128,11 +129,12 @@ def download_video(
     cancel_event: threading.Event | None = None,
     allow_playlist: bool = False,
     allow_gallery_fallback: bool = True,
-    cookies_browser: str = ""
+    cookies_browser: str = "",
+    playlist_limit: int = 0,
 ) -> str:
     """
     Скачивает видео или аудио с помощью yt-dlp.
-    Поддерживает отмену через cancel_event, плейлисты и cookies.txt.
+    Поддерживает отмену через cancel_event, плейлисты (playlist_limit > 0 — только первые N видео) и cookies.txt.
     """
     def hook(d: dict[str, Any]) -> None:
         if cancel_event and cancel_event.is_set():
@@ -141,16 +143,19 @@ def download_video(
         if d.get("status") == "downloading":
             total = d.get("total_bytes") or d.get("total_bytes_estimate") or 0
             dl = d.get("downloaded_bytes", 0)
+            entry = d.get("info_dict") or {}
+            number, count = entry.get("playlist_index"), entry.get("n_entries")
+            which = f"Видео {number} из {count}: " if number and count and count > 1 else ""
             if total > 0:
                 p = dl / total
                 progress_callback(
-                    f"Загрузка: {int(p * 100)}%",
+                    f"{which}Загрузка: {int(p * 100)}%",
                     "working",
                     p,
                     f"{int(p * 100)}%"
                 )
             else:
-                progress_callback("Загрузка медиапотока...", "working", None, "")
+                progress_callback(f"{which}Загрузка медиапотока...", "working", None, "")
         elif d.get("status") == "finished":
             progress_callback("Обработка и объединение дорожек...", "working", 0.98, "98%")
 
@@ -172,6 +177,8 @@ def download_video(
         "format": fmt,
         "windowsfilenames": True,
     }
+    if allow_playlist and playlist_limit > 0:
+        opts["playlistend"] = playlist_limit
     if FFMPEG_PATH:
         opts["ffmpeg_location"] = FFMPEG_PATH
     if postprocessors:

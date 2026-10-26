@@ -96,6 +96,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     fun remove(id: Int) = io { Bridge.remove(ctx, id) }
 
+    fun setItemPlaylist(id: Int, take: Boolean, limit: Int) = io { Bridge.setItemPlaylist(ctx, id, take, limit) }
+
     fun setItemQuality(id: Int, quality: String) = io { Bridge.setItemQuality(ctx, id, quality) }
 
     fun clearFinished() = io {
