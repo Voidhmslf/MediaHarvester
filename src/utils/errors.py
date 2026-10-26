@@ -94,7 +94,7 @@ _RULES: list[tuple[str, str, str, str]] = [
     ("ssl", r"certificate_verify_failed|ssl:|sslerror|ssl error|certificate",
      "Ошибка защищённого соединения (SSL)",
      "Проверьте дату и время на компьютере, а также антивирус или VPN, подменяющие сертификаты"),
-    ("network", r"getaddrinfo failed|name or service not known|temporary failure in name resolution|"
+    ("network", r"getaddrinfo failed|failed to resolve|no address associated with hostname|name or service not known|temporary failure in name resolution|"
                r"network is unreachable|connection refused|connectionerror|max retries exceeded|"
                r"timed out|timeout|remote end closed|connection reset|connection aborted|"
                r"incompleteread|unable to connect|no route to host|urlopen error|read error|"

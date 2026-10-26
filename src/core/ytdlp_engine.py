@@ -1,4 +1,5 @@
 import os
+import re
 import threading
 from typing import Callable, Any
 import yt_dlp
@@ -39,7 +40,20 @@ def get_video_format_spec(choice: str) -> tuple[str, list[dict[str, Any]]]:
         fmt = "bestvideo[height<=360]+bestaudio/best[height<=360]/best"
     else:
         fmt = "bestvideo+bestaudio/best"
+    if not FFMPEG_PATH and "+" in fmt:
+        # Без FFmpeg раздельные дорожки не склеить: берём готовые файлы (видео со звуком) нужной высоты
+        limit = re.search(r"height<=(\d+)", fmt)
+        fmt = f"best[height<={limit.group(1)}]/best" if limit else "best"
     return fmt, postprocessors
+
+
+def _android_opts(opts: dict[str, Any]) -> None:
+    """
+    Без FFmpeg (Android) нужны готовые файлы со звуком, а YouTube по умолчанию отдаёт только раздельные дорожки.
+    Клиент android_vr даёт обычный mp4 (format 18) без JavaScript-рантайма.
+    """
+    if not FFMPEG_PATH:
+        opts["extractor_args"] = {"youtube": {"player_client": ["android_vr", "default"]}}
 
 
 def _apply_cookies(opts: dict[str, Any], cookies_path: str, cookies_browser: str) -> None:
@@ -66,6 +80,7 @@ def probe_video_quality(url: str, cookies_path: str = "", cookies_browser: str =
         opts["ffmpeg_location"] = FFMPEG_PATH
 
     _apply_cookies(opts, cookies_path, cookies_browser)
+    _android_opts(opts)
 
     with yt_dlp.YoutubeDL(opts) as ydl:
         info = ydl.extract_info(url, download=False)
@@ -141,6 +156,7 @@ def download_video(
     if postprocessors:
         opts["postprocessors"] = postprocessors
     _apply_cookies(opts, cookies_path, cookies_browser)
+    _android_opts(opts)
 
     try:
         with yt_dlp.YoutubeDL(opts) as ydl:

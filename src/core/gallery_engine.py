@@ -4,7 +4,7 @@ import sys
 import threading
 from typing import Callable
 from src.utils import browser_cookies
-from src.utils.helpers import DownloadCancelledError
+from src.utils.helpers import DownloadCancelledError, is_android
 from src.utils.logger import get_logger
 
 log = get_logger("gallery")
@@ -66,57 +66,72 @@ def download_gallery(
 
     cmd.append(url)
 
-    startupinfo = None
-    creationflags = 0
-    if sys.platform == "win32":
-        startupinfo = subprocess.STARTUPINFO()
-        startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-        creationflags = subprocess.CREATE_NO_WINDOW
-
     stdout_lines: list[str] = []
     stderr_lines: list[str] = []
 
-    try:
-        proc = subprocess.Popen(
-            cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            startupinfo=startupinfo,
-            creationflags=creationflags
-        )
+    if is_android():
+        from src.core.gallery_inproc import run_gallery_dl
+        try:
+            returncode = run_gallery_dl(cmd[3:], stdout_lines, stderr_lines, cancel_event)
+        except DownloadCancelledError:
+            _notify(f"Загрузка из {platform_name} отменена", "warning")
+            raise
+        except Exception as e:
+            returncode = 1
+            stderr_lines.append(str(e))
+        for line in stdout_lines:
+            base_name = os.path.basename(line)
+            if base_name.lower().endswith(MEDIA_EXTENSIONS):
+                _notify(f"Скачано: {base_name[:32]}", "working")
+    else:
+        startupinfo = None
+        creationflags = 0
+        if sys.platform == "win32":
+            startupinfo = subprocess.STARTUPINFO()
+            startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+            creationflags = subprocess.CREATE_NO_WINDOW
 
-        # Читаем вывод в реальном времени с поддержкой cancel_event
-        if proc.stdout:
-            for line in proc.stdout:
-                if cancel_event and cancel_event.is_set():
-                    try:
-                        proc.terminate()
-                        proc.wait(timeout=2)
-                    except Exception:
-                        proc.kill()
-                    _notify(f"Загрузка из {platform_name} отменена", "warning")
-                    raise DownloadCancelledError("Загрузка отменена пользователем")
+        try:
+            proc = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                startupinfo=startupinfo,
+                creationflags=creationflags
+            )
 
-                line_str = line.strip()
-                if line_str:
-                    stdout_lines.append(line_str)
-                    base_name = os.path.basename(line_str)
-                    if base_name and base_name.lower().endswith(MEDIA_EXTENSIONS):
-                        _notify(f"Скачано: {base_name[:32]}", "working")
+            # Читаем вывод в реальном времени с поддержкой cancel_event
+            if proc.stdout:
+                for line in proc.stdout:
+                    if cancel_event and cancel_event.is_set():
+                        try:
+                            proc.terminate()
+                            proc.wait(timeout=2)
+                        except Exception:
+                            proc.kill()
+                        _notify(f"Загрузка из {platform_name} отменена", "warning")
+                        raise DownloadCancelledError("Загрузка отменена пользователем")
 
-        _, stderr_text = proc.communicate()
-        if stderr_text:
-            stderr_lines.extend(stderr_text.splitlines())
+                    line_str = line.strip()
+                    if line_str:
+                        stdout_lines.append(line_str)
+                        base_name = os.path.basename(line_str)
+                        if base_name and base_name.lower().endswith(MEDIA_EXTENSIONS):
+                            _notify(f"Скачано: {base_name[:32]}", "working")
 
-        returncode = proc.returncode
-    except DownloadCancelledError:
-        raise
-    except Exception as e:
-        returncode = 1
-        stderr_lines.append(str(e))
+            _, stderr_text = proc.communicate()
+            if stderr_text:
+                stderr_lines.extend(stderr_text.splitlines())
+
+            returncode = proc.returncode
+        except DownloadCancelledError:
+            raise
+        except Exception as e:
+            returncode = 1
+            stderr_lines.append(str(e))
 
     if cancel_event and cancel_event.is_set():
         _notify(f"Загрузка из {platform_name} отменена", "warning")

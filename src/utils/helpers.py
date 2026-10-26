@@ -10,13 +10,22 @@ class DownloadCancelledError(Exception):
     pass
 
 
-# Определение пути к FFmpeg для объединения потоков и конвертации
+def is_android() -> bool:
+    """Запуск внутри Android-приложения (Chaquopy): Kotlin-часть выставляет MH_ANDROID=1."""
+    return os.environ.get("MH_ANDROID") == "1"
+
+
+# Определение пути к FFmpeg для объединения потоков и конвертации.
+# На Android путь к бинарнику задаёт приложение через MH_FFMPEG (может быть пустым — тогда без склейки).
 FFMPEG_PATH: str | None = None
-try:
-    import imageio_ffmpeg
-    FFMPEG_PATH = imageio_ffmpeg.get_ffmpeg_exe()
-except Exception:
-    FFMPEG_PATH = shutil.which("ffmpeg")
+if is_android():
+    FFMPEG_PATH = os.environ.get("MH_FFMPEG") or None
+else:
+    try:
+        import imageio_ffmpeg
+        FFMPEG_PATH = imageio_ffmpeg.get_ffmpeg_exe()
+    except Exception:
+        FFMPEG_PATH = shutil.which("ffmpeg")
 
 
 def get_app_data_dir() -> str:
@@ -24,6 +33,10 @@ def get_app_data_dir() -> str:
     Постоянная папка для настроек и обновлений. В одно-файловой сборке PyInstaller папка рядом
     с кодом — временная (_MEIPASS) и стирается при выходе, поэтому данные хранятся в профиле пользователя.
     """
+    if is_android():
+        path = os.environ.get("MH_DATA_DIR") or os.path.expanduser("~/MediaHarvester")
+        os.makedirs(path, exist_ok=True)
+        return path
     if sys.platform == "win32":
         base = os.environ.get("LOCALAPPDATA") or os.path.expanduser("~")
     elif sys.platform == "darwin":

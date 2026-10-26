@@ -131,5 +131,14 @@ class QueueErrorTests(unittest.TestCase):
         self.assertNotIn("leakme123", report)
 
 
+
+
+class AndroidDnsErrorTests(unittest.TestCase):
+    def test_dns_failure_is_network_not_broken_extractor(self):
+        e = RuntimeError("ERROR: [youtube] x: Unable to download API page: HTTPSConnection(host='www.youtube.com'): "
+                         "Failed to resolve 'www.youtube.com' ([Errno 7] No address associated with hostname)")
+        self.assertEqual(explain_error(e).kind, "network")
+
+
 if __name__ == "__main__":
     unittest.main()
