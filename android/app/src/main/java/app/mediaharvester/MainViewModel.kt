@@ -25,6 +25,7 @@ data class UiState(
     val running: Boolean = false,
     val cancelling: Boolean = false,
     val saved: Map<Int, Int> = emptyMap(),
+    val uris: Map<Int, List<String>> = emptyMap(),
     val theme: String = "system",
     val notice: String? = null,
     val input: String = "",
@@ -78,7 +79,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 val snap = Bridge.snapshot(ctx)
                 _state.update {
                     it.copy(items = snap.items, running = snap.running, cancelling = snap.cancelling,
-                        saved = Exporter.saved.value, history = History.entries.value)
+                        saved = Exporter.saved.value, uris = Exporter.uris.value, history = History.entries.value)
                 }
                 delay(500)
             }

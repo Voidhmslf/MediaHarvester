@@ -2,6 +2,7 @@ package app.mediaharvester
 
 import android.content.ContentValues
 import android.content.Context
+import android.net.Uri
 import android.provider.MediaStore
 import android.util.Log
 import android.webkit.MimeTypeMap
@@ -9,26 +10,34 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import java.io.File
 
-/** Переносит готовые файлы из временной папки в общую «Загрузки/MediaHarvester» (MediaStore, без разрешений). */
+/** Переносит готовые файлы из временной папки в общую «Загрузки/<папка>» (MediaStore, без разрешений). */
 object Exporter {
     private const val TAG = "Exporter"
     private val _saved = MutableStateFlow<Map<Int, Int>>(emptyMap())
+    private val _uris = MutableStateFlow<Map<Int, List<String>>>(emptyMap())
 
     /** id элемента очереди -> сколько файлов сохранено. */
     val saved: StateFlow<Map<Int, Int>> = _saved
+
+    /** id элемента очереди -> адреса сохранённых файлов (content://), чтобы открыть или отправить их. */
+    val uris: StateFlow<Map<Int, List<String>>> = _uris
 
     @Synchronized
     fun exportDone(context: Context, items: List<QueueEntry>) {
         for (item in items) {
             if (item.status != ItemStatus.DONE || item.id in _saved.value) continue
             var count = 0
+            val savedUris = mutableListOf<String>()
             for (path in item.files) {
                 val file = File(path)
-                if (file.isFile && copyToDownloads(context, file, item)) {
+                val uri = if (file.isFile) copyToDownloads(context, file, item) else null
+                if (uri != null) {
                     file.delete()
                     count++
+                    if (uri != Uri.EMPTY) savedUris += uri.toString()
                 }
             }
+            _uris.value = _uris.value + (item.id to savedUris)
             _saved.value = _saved.value + (item.id to count)
         }
     }
@@ -37,6 +46,7 @@ object Exporter {
     @Synchronized
     fun reset() {
         _saved.value = emptyMap()
+        _uris.value = emptyMap()
     }
 
     private fun alreadySaved(context: Context, name: String, relativePath: String): Boolean =
@@ -46,7 +56,8 @@ object Exporter {
             arrayOf(name, "$relativePath/"), null,
         )?.use { it.moveToFirst() } ?: false
 
-    private fun copyToDownloads(context: Context, file: File, item: QueueEntry): Boolean = try {
+    /** Адрес сохранённого файла; Uri.EMPTY — такой трек уже лежит в «Загрузках»; null — не удалось сохранить. */
+    private fun copyToDownloads(context: Context, file: File, item: QueueEntry): Uri? = try {
         val resolver = context.contentResolver
         val staging = Bridge.stagingDir(context)
         // Подпапка сохраняется: staging/Instagram_Downloads/x.jpg -> Download/MediaHarvester/Instagram_Downloads/
@@ -60,21 +71,19 @@ object Exporter {
             put(MediaStore.Downloads.IS_PENDING, 1)
         }
         if (item.isTracks && file.extension == "mp3" && alreadySaved(context, file.name, relative)) {
-            true // трек уже лежит в «Загрузках»: повторный запуск списка не плодит копии
+            Uri.EMPTY // трек уже лежит в «Загрузках»: повторный запуск списка не плодит копии
         } else {
-        val uri = resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)
-        if (uri == null) {
-            false
-        } else {
-            resolver.openOutputStream(uri)?.use { out -> file.inputStream().use { it.copyTo(out) } }
-            values.clear()
-            values.put(MediaStore.Downloads.IS_PENDING, 0)
-            resolver.update(uri, values, null, null)
-            true
-        }
+            val uri = resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)
+            if (uri != null) {
+                resolver.openOutputStream(uri)?.use { out -> file.inputStream().use { it.copyTo(out) } }
+                values.clear()
+                values.put(MediaStore.Downloads.IS_PENDING, 0)
+                resolver.update(uri, values, null, null)
+            }
+            uri
         }
     } catch (e: Exception) {
         Log.e(TAG, "Не удалось сохранить ${file.name} (${item.url})", e)
-        false
+        null
     }
 }

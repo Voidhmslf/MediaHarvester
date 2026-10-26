@@ -18,6 +18,7 @@ data class HistoryEntry(
     val isTracks: Boolean,
     val folder: String = Settings.DEFAULT_FOLDER,
     val title: String = "",
+    val uris: List<String> = emptyList(),
 )
 
 /** Журнал завершённых загрузок (последние 200) в файле history.json; ссылки можно вернуть в очередь. */
@@ -42,6 +43,7 @@ object History {
                     o.optString("text"), o.optInt("files"), o.optBoolean("tracks"),
                     o.optString("folder").ifEmpty { Settings.DEFAULT_FOLDER },
                     o.optString("title"),
+                    o.optJSONArray("uris")?.let { ua -> List(ua.length()) { ua.getString(it) } }.orEmpty(),
                 )
             }
         } catch (e: Exception) {
@@ -51,7 +53,7 @@ object History {
 
     /** Добавляет в историю завершённые элементы очереди (каждый только один раз). saved — сколько файлов сохранено. */
     @Synchronized
-    fun record(context: Context, items: List<QueueEntry>, saved: Map<Int, Int>) {
+    fun record(context: Context, items: List<QueueEntry>, saved: Map<Int, Int>, uris: Map<Int, List<String>>) {
         val fresh = items.filter { it.id !in recorded && (it.status == ItemStatus.ERROR || (it.status == ItemStatus.DONE && it.id in saved)) }
         if (fresh.isEmpty()) return
         val now = System.currentTimeMillis()
@@ -61,6 +63,7 @@ object History {
                 time = now, url = it.url, label = it.label, ok = it.status == ItemStatus.DONE,
                 text = if (it.status == ItemStatus.DONE) "" else it.message.ifBlank { "Ошибка" },
                 files = saved[it.id] ?: 0, isTracks = it.isTracks, folder = Settings.folderName(context), title = it.title,
+                uris = uris[it.id].orEmpty(),
             )
         }
         save(context, (added.reversed() + _entries.value).take(LIMIT))
@@ -77,7 +80,7 @@ object History {
         val arr = JSONArray()
         list.forEach {
             arr.put(JSONObject().put("time", it.time).put("url", it.url).put("label", it.label).put("ok", it.ok)
-                .put("text", it.text).put("files", it.files).put("tracks", it.isTracks).put("folder", it.folder).put("title", it.title))
+                .put("text", it.text).put("files", it.files).put("tracks", it.isTracks).put("folder", it.folder).put("title", it.title).put("uris", JSONArray(it.uris)))
         }
         file(context).writeText(arr.toString())
     }

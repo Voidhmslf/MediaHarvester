@@ -428,6 +428,7 @@ private fun HistoryRow(entry: app.mediaharvester.HistoryEntry, state: UiState, v
             if (entry.ok) "$whenText · сохранено файлов: ${entry.files} (Загрузки/${entry.folder})" else "$whenText · ${entry.text}",
             style = MaterialTheme.typography.bodySmall, color = if (entry.ok) p.green else p.danger,
         )
+        if (entry.ok && entry.uris.isNotEmpty()) FileButtons(entry.uris)
         if (!entry.isTracks) {
             Spacer(Modifier.height(10.dp))
             Button("Скачать ещё раз", Modifier.fillMaxWidth(), primary = false) { vm.historyRequeue(entry) }
@@ -616,6 +617,8 @@ private fun QueueRow(item: QueueEntry, state: UiState, vm: MainViewModel) {
             ItemStatus.CANCELLED -> "Отменено" to p.amber
         }
         Text(line, style = MaterialTheme.typography.bodyMedium, color = color)
+        val savedUris = state.uris[item.id].orEmpty()
+        if (item.status == ItemStatus.DONE && savedUris.isNotEmpty()) FileButtons(savedUris)
         if (item.status == ItemStatus.ERROR && item.hint.isNotBlank()) {
             Text(item.hint, style = MaterialTheme.typography.bodySmall, color = p.textSecondary, modifier = Modifier.padding(top = 4.dp))
         }
@@ -647,6 +650,19 @@ private fun QueueRow(item: QueueEntry, state: UiState, vm: MainViewModel) {
                 LinearProgressIndicator(modifier = Modifier.fillMaxWidth().height(6.dp).clip(RoundedCornerShape(3.dp)), color = p.accent, trackColor = p.secondary)
             }
         }
+    }
+}
+
+@Composable
+private fun FileButtons(uris: List<String>) {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.padding(top = 10.dp)) {
+        if (uris.size == 1) {
+            Button("Открыть", Modifier.weight(1f), primary = false) { app.mediaharvester.FileActions.open(context, uris[0]) }
+        } else {
+            Button("Открыть «Загрузки»", Modifier.weight(1f), primary = false) { app.mediaharvester.FileActions.openDownloads(context) }
+        }
+        Button("Поделиться", Modifier.weight(1f), primary = false) { app.mediaharvester.FileActions.share(context, uris) }
     }
 }
 

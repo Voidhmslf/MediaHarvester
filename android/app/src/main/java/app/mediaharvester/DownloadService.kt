@@ -48,7 +48,7 @@ class DownloadService : Service() {
         while (true) {
             last = Bridge.snapshot(this)
             Exporter.exportDone(this, last.items)
-            History.record(this, last.items, Exporter.saved.value)
+            History.record(this, last.items, Exporter.saved.value, Exporter.uris.value)
             val total = last.items.count { it.status != ItemStatus.CANCELLED }
             val finished = last.items.count { it.status == ItemStatus.DONE || it.status == ItemStatus.ERROR }
             val current = last.items.firstOrNull { it.status == ItemStatus.WORKING }
