@@ -18,6 +18,7 @@ _thread: threading.Thread | None = None
 _staging = ""
 _vk_token = ""
 _cookies_path = ""
+_options = {"audio_codec": "mp3", "embed_cover": False, "subtitle_langs": []}
 _probe_enabled = True  # тесты отключают сетевой разбор ссылок
 _probe_pool = None  # поток-пул для разбора ссылок (название, обложка, качества)
 
@@ -84,6 +85,15 @@ def vk_login(text: str, validate: bool = True) -> str:
     with _lock:
         _vk_token = token
     return json.dumps({"ok": True, "token": token, "name": name}, ensure_ascii=False)
+
+
+def set_options(audio_codec: str = "mp3", embed_cover: bool = False, subtitles: bool = False,
+                subtitle_langs: str = "ru,en") -> None:
+    """Параметры загрузки из настроек: формат звука, обложка в файле, субтитры (языки через запятую)."""
+    langs = [x.strip() for x in (subtitle_langs or "").split(",") if x.strip()]
+    with _lock:
+        _options.update(audio_codec=audio_codec, embed_cover=bool(embed_cover),
+                        subtitle_langs=langs if subtitles else [])
 
 
 def set_cookies(path: str) -> None:
@@ -434,7 +444,8 @@ def _run_item(it: dict, quality: str) -> None:
 def _download_tracks(text: str, cb) -> str:
     from src.core.track_search import download_track_list
     return download_track_list(text=text, download_path=_out_dir(), progress_callback=cb,
-                               cookies_path=_cookies_path, cancel_event=_cancel)
+                               cookies_path=_cookies_path, cancel_event=_cancel,
+                               audio_codec=_options["audio_codec"], embed_cover=_options["embed_cover"])
 
 
 def _download_one(url: str, quality: str, cb, playlist: bool | None = None, limit: int = 0) -> str:
@@ -466,7 +477,9 @@ def _download_one(url: str, quality: str, cb, playlist: bool | None = None, limi
         url=url, download_path=_out_dir(), quality_choice=quality, progress_callback=cb,
         cookies_path=_cookies_path, cancel_event=_cancel,
         allow_playlist=bool(detected.get("playlist")) if playlist is None else playlist,
-        playlist_limit=limit if playlist else 0)
+        playlist_limit=limit if playlist else 0,
+        audio_codec=_options["audio_codec"], embed_cover=_options["embed_cover"],
+        subtitle_langs=_options["subtitle_langs"])
     cb(f"Готово: {title[:40]}", "success", 1.0, "100%")
     return _out_dir()
 

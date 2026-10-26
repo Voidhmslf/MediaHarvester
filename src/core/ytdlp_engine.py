@@ -11,21 +11,34 @@ from src.utils.logger import get_logger
 log = get_logger("ytdlp")
 
 
-def get_video_format_spec(choice: str) -> tuple[str, list[dict[str, Any]]]:
-    """Формирует спецификацию формата yt-dlp и пост-процессоры по выбранному качеству."""
+AUDIO_CODECS = ("mp3", "m4a", "opus")
+
+
+def get_video_format_spec(choice: str, audio_codec: str = "mp3",
+                          embed_cover: bool = False) -> tuple[str, list[dict[str, Any]]]:
+    """
+    Формирует спецификацию формата yt-dlp и пост-процессоры по выбранному качеству.
+    Для «Только аудио»: audio_codec — mp3 (320 кбит/с), m4a или opus (без лишней перекодировки),
+    embed_cover — вшить обложку в файл.
+    """
     postprocessors: list[dict[str, Any]] = []
     if "Только аудио" in choice:
         fmt = "bestaudio/best"
         if FFMPEG_PATH:
-            postprocessors.append({
-                "key": "FFmpegExtractAudio",
-                "preferredcodec": "mp3",
-                "preferredquality": "320",  # Максимальное качество MP3 (320 kbps)
-            })
+            codec = audio_codec if audio_codec in AUDIO_CODECS else "mp3"
+            extract: dict[str, Any] = {"key": "FFmpegExtractAudio", "preferredcodec": codec}
+            if codec == "mp3":
+                extract["preferredquality"] = "320"  # Максимальное качество MP3 (320 kbps)
+            if embed_cover:
+                # Обложка скачивается и переводится в jpg до обработки звука, вшивается в самом конце
+                postprocessors.append({"key": "FFmpegThumbnailsConvertor", "format": "jpg", "when": "before_dl"})
+            postprocessors.append(extract)
             postprocessors.append({
                 "key": "FFmpegMetadata",
                 "add_metadata": True,       # Запись тегов исполнителя, трека и альбома
             })
+            if embed_cover:
+                postprocessors.append({"key": "EmbedThumbnail", "already_have_thumbnail": False})
     elif "2160p" in choice or "4K" in choice:
         fmt = "bestvideo[height<=2160]+bestaudio/best[height<=2160]/best"
     elif "1440p" in choice or "2K" in choice:
@@ -54,6 +67,40 @@ def _android_opts(opts: dict[str, Any]) -> None:
     """
     if not FFMPEG_PATH:
         opts["extractor_args"] = {"youtube": {"player_client": ["android_vr", "default"]}}
+
+
+def needs_thumbnail(postprocessors: list[dict[str, Any]]) -> bool:
+    """Нужно ли скачивать обложку (есть шаг вшивания)."""
+    return any(p.get("key") == "EmbedThumbnail" for p in postprocessors)
+
+
+def _format_speed(speed: float | None) -> str:
+    if not speed or speed <= 0:
+        return ""
+    if speed >= 1024 * 1024:
+        return f"{speed / 1024 / 1024:.1f} МБ/с".replace(".", ",")
+    return f"{speed / 1024:.0f} КБ/с"
+
+
+def _format_eta(seconds: float | None) -> str:
+    if seconds is None or seconds < 0:
+        return ""
+    seconds = int(seconds)
+    hours, rest = divmod(seconds, 3600)
+    minutes, secs = divmod(rest, 60)
+    return f"{hours}:{minutes:02d}:{secs:02d}" if hours else f"{minutes}:{secs:02d}"
+
+
+def progress_details(d: dict[str, Any]) -> str:
+    """« · 3,1 МБ/с · осталось 1:20» для строки состояния (пусто, если yt-dlp ещё не знает скорости)."""
+    parts = []
+    speed = _format_speed(d.get("speed"))
+    if speed:
+        parts.append(speed)
+    eta = _format_eta(d.get("eta"))
+    if eta:
+        parts.append(f"осталось {eta}")
+    return "".join(f" · {p}" for p in parts)
 
 
 def _apply_cookies(opts: dict[str, Any], cookies_path: str, cookies_browser: str) -> None:
@@ -131,6 +178,9 @@ def download_video(
     allow_gallery_fallback: bool = True,
     cookies_browser: str = "",
     playlist_limit: int = 0,
+    audio_codec: str = "mp3",
+    embed_cover: bool = False,
+    subtitle_langs: list[str] | None = None,
 ) -> str:
     """
     Скачивает видео или аудио с помощью yt-dlp.
@@ -149,7 +199,7 @@ def download_video(
             if total > 0:
                 p = dl / total
                 progress_callback(
-                    f"{which}Загрузка: {int(p * 100)}%",
+                    f"{which}Загрузка: {int(p * 100)}%{progress_details(d)}",
                     "working",
                     p,
                     f"{int(p * 100)}%"
@@ -159,7 +209,7 @@ def download_video(
         elif d.get("status") == "finished":
             progress_callback("Обработка и объединение дорожек...", "working", 0.98, "98%")
 
-    fmt, postprocessors = get_video_format_spec(quality_choice)
+    fmt, postprocessors = get_video_format_spec(quality_choice, audio_codec, embed_cover)
 
     if allow_playlist:
         outtmpl = os.path.join(download_path, "%(playlist_title,title)s", "%(title)s.%(ext)s")
@@ -179,6 +229,16 @@ def download_video(
     }
     if allow_playlist and playlist_limit > 0:
         opts["playlistend"] = playlist_limit
+    if needs_thumbnail(postprocessors):
+        opts["writethumbnail"] = True
+    if subtitle_langs and "Только аудио" not in quality_choice:
+        # Субтитры отдельными .srt рядом с видео: сначала настоящие, при их отсутствии — автоматические
+        opts["writesubtitles"] = True
+        opts["writeautomaticsub"] = True
+        opts["subtitleslangs"] = subtitle_langs
+        opts["subtitlesformat"] = "srt/best"
+        if FFMPEG_PATH:
+            postprocessors = [*postprocessors, {"key": "FFmpegSubtitlesConvertor", "format": "srt"}]
     if FFMPEG_PATH:
         opts["ffmpeg_location"] = FFMPEG_PATH
     if postprocessors:

@@ -270,6 +270,21 @@ class BridgeQueueTests(unittest.TestCase):
             self.bridge._thread.join(10)
         self.assertEqual(sorted(i["status"] for i in self.snap()["items"]), ["cancelled", "pending"])
 
+    def test_options_reach_the_ytdlp_engine(self):
+        import src.core.ytdlp_engine as ye
+        seen = {}
+
+        def spy(**kw):
+            seen.update(kw)
+            return "Название"
+
+        self.bridge.set_options("opus", True, True, " ru, en ,")
+        with mock.patch.object(ye, "download_video", spy):
+            self.bridge._download_one("https://youtu.be/xyz", "Только аудио (MP3)", lambda *a: None)
+        self.assertEqual((seen["audio_codec"], seen["embed_cover"], seen["subtitle_langs"]), ("opus", True, ["ru", "en"]))
+        self.bridge.set_options("mp3", False, False, "ru,en")
+        self.assertEqual(self.bridge._options["subtitle_langs"], [])  # выключено -> языки не передаются
+
     def test_tracklist_becomes_single_queue_item(self):
         text = "1. Queen - Bohemian Rhapsody\n# коммент\nABBA — Waterloo\n"
         self.assertEqual(self.bridge.add_tracks(text), 2)
@@ -373,6 +388,66 @@ class PlaylistLimitTests(unittest.TestCase):
         self.assertEqual((opts["playlistend"], opts["noplaylist"]), (5, False))
         self.assertNotIn("playlistend", self.run_download(allow_playlist=True))
         self.assertNotIn("playlistend", self.run_download(allow_playlist=False, playlist_limit=5))
+
+
+class AudioOptionsTests(unittest.TestCase):
+    def spec(self, codec="mp3", cover=False):
+        with mock.patch.object(ytdlp_engine, "FFMPEG_PATH", "ffmpeg"):
+            return ytdlp_engine.get_video_format_spec("Только аудио (MP3)", codec, cover)
+
+    def test_mp3_keeps_320_and_no_cover_by_default(self):
+        _, pps = self.spec()
+        keys = [p["key"] for p in pps]
+        self.assertEqual(keys, ["FFmpegExtractAudio", "FFmpegMetadata"])
+        self.assertEqual((pps[0]["preferredcodec"], pps[0]["preferredquality"]), ("mp3", "320"))
+        self.assertFalse(ytdlp_engine.needs_thumbnail(pps))
+
+    def test_cover_is_converted_first_and_embedded_last(self):
+        _, pps = self.spec("m4a", True)
+        keys = [p["key"] for p in pps]
+        self.assertEqual(keys, ["FFmpegThumbnailsConvertor", "FFmpegExtractAudio", "FFmpegMetadata", "EmbedThumbnail"])
+        self.assertEqual(pps[1]["preferredcodec"], "m4a")
+        self.assertNotIn("preferredquality", pps[1])  # без лишней перекодировки
+        self.assertTrue(ytdlp_engine.needs_thumbnail(pps))
+
+    def test_unknown_codec_falls_back_to_mp3(self):
+        _, pps = self.spec("wav")
+        self.assertEqual(pps[0]["preferredcodec"], "mp3")
+
+    def test_speed_and_eta_text(self):
+        self.assertEqual(ytdlp_engine.progress_details({"speed": 3.2 * 1024 * 1024, "eta": 80}), " · 3,2 МБ/с · осталось 1:20")
+        self.assertEqual(ytdlp_engine.progress_details({"speed": 512 * 1024, "eta": 3700}), " · 512 КБ/с · осталось 1:01:40")
+        self.assertEqual(ytdlp_engine.progress_details({"speed": None, "eta": None}), "")
+
+
+class SubtitleOptionsTests(unittest.TestCase):
+    def run_download(self, choice, langs):
+        captured = {}
+
+        class FakeYDL:
+            def __init__(self, opts):
+                captured.update(opts)
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                return False
+
+            def extract_info(self, url, download=True):
+                return {"title": "Видео"}
+
+        with mock.patch.object(ytdlp_engine.yt_dlp, "YoutubeDL", FakeYDL), \
+                mock.patch.object(ytdlp_engine, "FFMPEG_PATH", "ffmpeg"):
+            ytdlp_engine.download_video("https://youtu.be/x", "dl", choice, lambda *a: None, subtitle_langs=langs)
+        return captured
+
+    def test_subtitles_are_requested_for_video_only(self):
+        opts = self.run_download("HD (720p)", ["ru", "en"])
+        self.assertEqual((opts["writesubtitles"], opts["writeautomaticsub"], opts["subtitleslangs"]), (True, True, ["ru", "en"]))
+        self.assertIn("FFmpegSubtitlesConvertor", [p["key"] for p in opts["postprocessors"]])
+        self.assertNotIn("writesubtitles", self.run_download("Только аудио (MP3)", ["ru"]))
+        self.assertNotIn("writesubtitles", self.run_download("HD (720p)", []))
 
 
 if __name__ == "__main__":

@@ -35,6 +35,10 @@ data class UiState(
     val history: List<HistoryEntry> = emptyList(),
     val wifiOnly: Boolean = false,
     val parallel: Int = 1,
+    val audioCodec: String = "mp3",
+    val embedCover: Boolean = true,
+    val subtitles: Boolean = false,
+    val subtitleLangs: String = "ru,en",
     val waitingWifi: Boolean = false,
     val autoUpdate: Boolean = true,
     val folderName: String = Settings.DEFAULT_FOLDER,
@@ -54,7 +58,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private val prefs = app.getSharedPreferences("settings", Context.MODE_PRIVATE)
     private val _state = MutableStateFlow(UiState(
         theme = prefs.getString("theme", "system") ?: "system",
-        wifiOnly = Settings.wifiOnly(app), parallel = Settings.parallel(app), autoUpdate = Settings.autoUpdate(app), folderName = Settings.folderName(app),
+        wifiOnly = Settings.wifiOnly(app), parallel = Settings.parallel(app),
+        audioCodec = Settings.audioCodec(app), embedCover = Settings.embedCover(app),
+        subtitles = Settings.subtitles(app), subtitleLangs = Settings.subtitleLangs(app), autoUpdate = Settings.autoUpdate(app), folderName = Settings.folderName(app),
     ))
     val state: StateFlow<UiState> = _state.asStateFlow()
 
@@ -131,6 +137,26 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     fun setWifiOnly(on: Boolean) {
         Settings.setWifiOnly(ctx, on)
         _state.update { it.copy(wifiOnly = on) }
+    }
+
+    fun setAudioCodec(value: String) {
+        Settings.setAudioCodec(ctx, value)
+        _state.update { it.copy(audioCodec = Settings.audioCodec(ctx)) }
+    }
+
+    fun setEmbedCover(on: Boolean) {
+        Settings.setEmbedCover(ctx, on)
+        _state.update { it.copy(embedCover = on) }
+    }
+
+    fun setSubtitles(on: Boolean) {
+        Settings.setSubtitles(ctx, on)
+        _state.update { it.copy(subtitles = on) }
+    }
+
+    fun setSubtitleLangs(value: String) {
+        Settings.setSubtitleLangs(ctx, value)
+        _state.update { it.copy(subtitleLangs = Settings.subtitleLangs(ctx)) }
     }
 
     fun setParallel(value: Int) {

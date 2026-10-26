@@ -499,6 +499,43 @@ private fun SettingsScreen(state: UiState, vm: MainViewModel) {
             }
             item {
                 Card {
+                    Text("Звук и субтитры", style = MaterialTheme.typography.titleMedium, color = p.text)
+                    Spacer(Modifier.height(10.dp))
+                    Text("Формат звука", style = MaterialTheme.typography.labelLarge, color = p.text)
+                    Text("Для «Только аудио» и «Треков по списку»", style = MaterialTheme.typography.bodySmall, color = p.textMuted)
+                    Spacer(Modifier.height(6.dp))
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        listOf("mp3" to "MP3 320", "m4a" to "M4A", "opus" to "Opus").forEach { (codec, title) ->
+                            Pill(title, selected = state.audioCodec == codec) { vm.setAudioCodec(codec) }
+                        }
+                    }
+                    Spacer(Modifier.height(10.dp))
+                    SwitchRow("Обложка в файле", "Вшивать картинку и теги, чтобы трек красиво выглядел в плеере", state.embedCover, vm::setEmbedCover)
+                    Spacer(Modifier.height(10.dp))
+                    SwitchRow("Скачивать субтитры", "Файлом .srt рядом с видео (если они есть)", state.subtitles, vm::setSubtitles)
+                    if (state.subtitles) {
+                        var langs by remember(state.subtitleLangs) { mutableStateOf(state.subtitleLangs) }
+                        Spacer(Modifier.height(8.dp))
+                        Text("Языки через запятую: ru,en или all", style = MaterialTheme.typography.bodySmall, color = p.textMuted)
+                        Spacer(Modifier.height(6.dp))
+                        Box(
+                            Modifier.fillMaxWidth().clip(RoundedCornerShape(Dim.radiusControl)).background(p.inner)
+                                .border(BorderStroke(1.dp, p.innerBorder), RoundedCornerShape(Dim.radiusControl))
+                                .padding(horizontal = 12.dp, vertical = 12.dp),
+                        ) {
+                            BasicTextField(
+                                value = langs, onValueChange = { langs = it; vm.setSubtitleLangs(it) },
+                                singleLine = true,
+                                textStyle = MaterialTheme.typography.bodyLarge.copy(color = p.text),
+                                cursorBrush = SolidColor(p.accent),
+                                modifier = Modifier.fillMaxWidth(),
+                            )
+                        }
+                    }
+                }
+            }
+            item {
+                Card {
                     Text("Движки загрузки", style = MaterialTheme.typography.titleMedium, color = p.text)
                     Spacer(Modifier.height(6.dp))
                     val e = state.engines

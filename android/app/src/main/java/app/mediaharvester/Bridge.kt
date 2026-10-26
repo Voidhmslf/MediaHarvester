@@ -103,8 +103,18 @@ object Bridge {
 
     fun remove(context: Context, id: Int) { mod(context).callAttr("remove", id) }
     fun clearFinished(context: Context) { mod(context).callAttr("clear_finished") }
-    fun start(context: Context, quality: String, workers: Int = 1): Boolean =
-        mod(context).callAttr("start", quality, workers).toBoolean()
+    /** Передаёт настройки загрузки (звук, обложка, субтитры) Python-ядру. */
+    fun applyOptions(context: Context) {
+        val app = context.applicationContext
+        mod(context).callAttr(
+            "set_options", Settings.audioCodec(app), Settings.embedCover(app), Settings.subtitles(app), Settings.subtitleLangs(app),
+        )
+    }
+
+    fun start(context: Context, quality: String, workers: Int = 1): Boolean {
+        applyOptions(context)
+        return mod(context).callAttr("start", quality, workers).toBoolean()
+    }
     fun cancel(context: Context) { mod(context).callAttr("cancel") }
 
     fun snapshot(context: Context): QueueSnapshot {

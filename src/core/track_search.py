@@ -10,7 +10,7 @@ from typing import Any, Callable
 
 import yt_dlp
 
-from src.core.ytdlp_engine import get_video_format_spec
+from src.core.ytdlp_engine import AUDIO_CODECS, get_video_format_spec, needs_thumbnail
 from src.utils.errors import explain_error
 from src.utils.helpers import FFMPEG_PATH, DownloadCancelledError, sanitize_filename
 from src.utils.logger import get_logger
@@ -151,6 +151,8 @@ def download_track_list(
     progress_callback: Callable[[str, str, float | None, str], None],
     cookies_path: str = "",
     cancel_event: threading.Event | None = None,
+    audio_codec: str = "mp3",
+    embed_cover: bool = False,
 ) -> str:
     """
     Ищет и скачивает треки из списка. Уже скачанные пропускает (повторный запуск докачивает только недостающее),
@@ -175,7 +177,8 @@ def download_track_list(
         base_opts["ffmpeg_location"] = FFMPEG_PATH
     if cookies_path and os.path.isfile(cookies_path):
         base_opts["cookiefile"] = cookies_path
-    _, postprocessors = get_video_format_spec("Только аудио (MP3)")
+    _, postprocessors = get_video_format_spec("Только аудио (MP3)", audio_codec, embed_cover)
+    codec_name = audio_codec.upper() if audio_codec in AUDIO_CODECS else "MP3"
 
     for index, track in enumerate(tracks, 1):
         if cancelled():
@@ -215,7 +218,7 @@ def download_track_list(
                     if total_bytes:
                         report(0.1 + 0.8 * d.get("downloaded_bytes", 0) / total_bytes)
                 elif d.get("status") == "finished":
-                    report(0.95, f"Конвертация в MP3: {stem[:30]}")
+                    report(0.95, f"Конвертация в {codec_name}: {stem[:30]}")
 
             opts = {
                 **base_opts,
@@ -227,6 +230,8 @@ def download_track_list(
             }
             if postprocessors:
                 opts["postprocessors"] = postprocessors
+            if needs_thumbnail(postprocessors):
+                opts["writethumbnail"] = True
             with yt_dlp.YoutubeDL(opts) as ydl:
                 ydl.download([url])
 
