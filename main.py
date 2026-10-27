@@ -12,6 +12,10 @@ if __name__ == "__main__":
         from src.core.vk_auth import run_login_window, BLANK_PREFIX
         sys.exit(run_login_window(sys.argv[2], sys.argv[3] if len(sys.argv) > 3 else BLANK_PREFIX))
 
+    # Linux-сборка: возвращаем системный LD_LIBRARY_PATH, чтобы xdg-open и браузер запускались нормально
+    from src.utils.helpers import restore_system_env
+    restore_system_env()
+
     # Подключаем скачанную свежую версию yt-dlp (если есть) до импорта остального кода
     try:
         from src.utils.ytdlp_updater import activate_override

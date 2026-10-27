@@ -5,7 +5,7 @@
 </p>
 
 <p align="center">
-  Программа для Windows и Android, которая скачивает видео, музыку и фотографии из соцсетей.<br>
+  Программа для Windows, Linux и Android, которая скачивает видео, музыку и фотографии из соцсетей.<br>
   YouTube, ВКонтакте, Instagram, TikTok, X, Pinterest, Reddit, SoundCloud и всё, что умеет yt-dlp.<br>
   Бесплатно, без регистрации, Python ставить не нужно.
 </p>
@@ -13,6 +13,7 @@
 <p align="center">
   <a href="https://github.com/Voidhmslf/MediaHarvester/releases/latest"><img src="https://img.shields.io/badge/Release-v1.2.1-D9480F?style=flat-square" alt="Release v1.2.1"></a>
   <img src="https://img.shields.io/badge/Platform-Windows-0078D4?style=flat-square" alt="Windows">
+  <img src="https://img.shields.io/badge/Platform-Linux-FCC624?style=flat-square" alt="Linux">
   <img src="https://img.shields.io/badge/Platform-Android_10+-3DDC84?style=flat-square" alt="Android 10+">
   <img src="https://img.shields.io/badge/Python-3.11+-3776AB?style=flat-square" alt="Python 3.11+">
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-2ea44f?style=flat-square" alt="MIT License"></a>
@@ -24,7 +25,7 @@
   <img src="docs/screenshot-light.png" width="360" alt="Светлая тема">
 </p>
 
-Разделы: [зачем это](#зачем-это) · [скачать](#скачать-и-запустить) · [Android](#mediaharvester-для-android) · [что умеет](#что-умеет) · [как пользоваться](#как-пользоваться) · [Instagram](#instagram) · [музыка](#музыка) · [ВКонтакте](#вконтакте-альбомы-и-вход) · [cookies](#cookies) · [если что-то пошло не так](#если-что-то-пошло-не-так) · [запуск из исходников](#запуск-из-исходников) · [сборка .exe](#сборка-exe) · [устройство проекта](#устройство-проекта) · [планы](#планы)
+Разделы: [зачем это](#зачем-это) · [скачать](#скачать-и-запустить) · [Linux](#mediaharvester-для-linux) · [Android](#mediaharvester-для-android) · [что умеет](#что-умеет) · [как пользоваться](#как-пользоваться) · [Instagram](#instagram) · [музыка](#музыка) · [ВКонтакте](#вконтакте-альбомы-и-вход) · [cookies](#cookies) · [если что-то пошло не так](#если-что-то-пошло-не-так) · [запуск из исходников](#запуск-из-исходников) · [сборка .exe](#сборка-exe) · [сборка для Linux](#сборка-для-linux) · [устройство проекта](#устройство-проекта) · [планы](#планы)
 
 ---
 
@@ -48,9 +49,42 @@ Get-FileHash .\MediaHarvester.exe -Algorithm SHA256
 
 - **SmartScreen и антивирусы.** Файл собран PyInstaller и не подписан сертификатом (подпись платная). Windows может написать «Неизвестный издатель»: нажмите «Подробнее» и «Выполнить в любом случае». Defender иногда срабатывает ложно на такие сборки. Код открыт, при желании [соберите файл сами](#сборка-exe).
 - **Не подменяйте `.exe`, пока программа запущена.** Для gallery-dl и окна входа VK программа запускает собственный файл как вспомогательный процесс и проверяет, что родитель тот же самый. Если файл заменили на ходу, появится «Security validation failure». Закройте все окна и запустите новый файл.
-- **Только Windows.** Проверялось на Windows 11. Часть кода (буфер обмена через Win32, окно входа VK на WebView2) работает только там. На Linux и macOS запуск не проверялся.
+- **Windows 10 и 11.** Проверялось на Windows 11. Для Linux есть [отдельная сборка](#mediaharvester-для-linux), на macOS запуск не проверялся.
 
 Свои данные программа хранит в `%LOCALAPPDATA%\MediaHarvester`: настройки (`settings.json`), лог (`logs`) и свежая версия yt-dlp (`yt-dlp`).
+
+## MediaHarvester для Linux
+
+Та же программа, что и для Windows, с тем же окном и возможностями. Она собрана так, чтобы запускаться на любом современном дистрибутиве без установки Python и зависимостей: внутри уже есть Python, все библиотеки, ffmpeg и шрифт Inter. Проверено на Ubuntu 22.04, Debian 12, Fedora и Arch. Подойдёт любой дистрибутив не старше Ubuntu 20.04 / Debian 11 / RHEL 9 на x86_64.
+
+На странице [релизов](https://github.com/Voidhmslf/MediaHarvester/releases/latest) есть два варианта, выберите любой:
+
+- **`MediaHarvester-1.2.1-linux-x86_64.AppImage`** — один файл. Скачайте его, разрешите запуск и откройте:
+
+  ```bash
+  chmod +x MediaHarvester-1.2.1-linux-x86_64.AppImage
+  ./MediaHarvester-1.2.1-linux-x86_64.AppImage
+  ```
+
+  Если AppImage пишет про FUSE (бывает на новых Ubuntu без пакета `libfuse2`), запустите его с ключом `--appimage-extract-and-run` или возьмите архив.
+- **`MediaHarvester-1.2.1-linux-x86_64.tar.gz`** — архив с установщиком. Он добавляет программу в меню приложений и команду `mediaharvester`, а FUSE ему не нужен:
+
+  ```bash
+  tar xzf MediaHarvester-1.2.1-linux-x86_64.tar.gz
+  cd MediaHarvester-1.2.1-linux-x86_64
+  ./install.sh
+  ```
+
+  Без `sudo` программа ставится в `~/.local`, с `sudo` — для всех пользователей в `/usr/local`. Удаляет её `./uninstall.sh` из того же архива.
+
+Контрольные суммы лежат в `SHA256SUMS-linux-x86_64.txt` (проверка: `sha256sum -c SHA256SUMS-linux-x86_64.txt`). Настройки, лог и свежий yt-dlp хранятся в `~/.local/share/MediaHarvester`, файлы по умолчанию сохраняются в `~/Downloads`.
+
+Чем версия для Linux отличается от Windows:
+
+- **Вход ВКонтакте** открывается в вашем обычном браузере, встроенного окна нет. Нажмите «Продолжить», скопируйте адрес страницы (Ctrl+L, Ctrl+C), и токен подхватится сам.
+- **Нужен X11 или XWayland.** Окно сделано на Tk, а он работает через X. На Wayland в GNOME, KDE и других средах XWayland включён по умолчанию, поэтому ничего делать не нужно.
+- **Мелкий интерфейс на экране с высокой плотностью.** Масштаб берётся из `GDK_SCALE` или `Xft.dpi`. Если окно всё равно мелкое, задайте масштаб вручную: `MH_SCALE=1.5 mediaharvester`.
+- **Cookies из браузера:** в списке есть Chromium, а Opera GX нет, потому что её не выпускают для Linux. Firefox из snap и flatpak yt-dlp находит сам.
 
 ## MediaHarvester для Android
 
@@ -242,6 +276,8 @@ pip install -r requirements.txt
 python main.py
 ```
 
+На Linux вместо `.venv\Scripts\Activate.ps1` выполните `source .venv/bin/activate`. Понадобится Python с Tk: в Debian и Ubuntu это пакет `python3-tk`, в Fedora `python3-tkinter`, в Arch `tk`.
+
 Отдельно качать ffmpeg не нужно: его приносит пакет `imageio-ffmpeg`. При запуске из исходников настройки лежат не в профиле, а в `settings.json` в корне проекта (файл в `.gitignore`). Лог и обновления yt-dlp остаются в `%LOCALAPPDATA%\MediaHarvester`.
 
 ## Сборка .exe
@@ -259,12 +295,23 @@ pyinstaller --clean --noconfirm MediaHarvester.spec
 - В файл упакованы ffmpeg, шрифты Inter, логотип, темы `customtkinter` и окно входа `pywebview`.
 - Из сборки исключены тяжёлые пакеты, которые программе не нужны (scipy, pandas, numpy, Jupyter и другие). Без этого файл весил бы около 180 МБ.
 
+## Сборка для Linux
+
+Собирать нужно на старой системе: программа требует ту версию glibc, на которой её собрали, и на более старых дистрибутивах не запустится. Поэтому сборка идёт в Docker-образе `python:3.11-bullseye` (glibc 2.31), и запускать её можно хоть с Windows:
+
+```bash
+docker run --rm -v "$PWD:/src:ro" -v "$PWD/dist/linux:/out" python:3.11-bullseye sh /src/packaging/linux/build.sh
+```
+
+В `dist/linux` появятся архив `.tar.gz` и `SHA256SUMS-linux-x86_64.txt`. Для AppImage положите рядом [appimagetool](https://github.com/AppImage/appimagetool/releases) и [runtime](https://github.com/AppImage/type2-runtime/releases) и передайте их пути через `APPIMAGETOOL` и `APPIMAGE_RUNTIME`. Всё, что относится к сборке, лежит в [`packaging/linux`](packaging/linux): настройки PyInstaller, установщик, ярлык и `Dockerfile.test` с виртуальным дисплеем для проверки окна и тестов без монитора.
+
 ## Устройство проекта
 
 ```text
 MediaHarvester/
 ├── main.py                      точка входа и служебные режимы для сборки
 ├── MediaHarvester.spec          настройки PyInstaller
+├── packaging/linux/             сборка для Linux: PyInstaller, AppImage, install.sh
 ├── requirements.txt
 ├── CHANGELOG.md                 что менялось в каждой версии
 ├── assets/                      иконка, логотип и шрифты Inter (с лицензией)
@@ -303,7 +350,7 @@ MediaHarvester/
 │       ├── logger.py            лог с ротацией и скрытием секретов
 │       ├── errors.py            перевод ошибок на человеческий язык
 │       ├── report.py            отчёт об ошибках
-│       ├── clipboard.py         буфер обмена через Win32
+│       ├── clipboard.py         буфер обмена через Win32 (на Linux — через Tk)
 │       ├── browser_cookies.py   cookies из браузера
 │       └── ytdlp_updater.py     автообновление yt-dlp
 └── tests/                       автотесты
@@ -317,7 +364,7 @@ MediaHarvester/
 python -m unittest discover -s tests -t .
 ```
 
-Сейчас их около 180. Сеть они не трогают (вместо неё локальные серверы и подмена yt-dlp), в ваш профиль ничего не пишут. GUI-тесты открывают настоящее окно, поэтому на машине без рабочего стола их отключают переменной `MH_SKIP_GUI=1`.
+Сейчас их больше 200, на Linux они тоже проходят (запуск под Xvfb: `xvfb-run -a python -m pytest tests`). Сеть они не трогают (вместо неё локальные серверы и подмена yt-dlp), в ваш профиль ничего не пишут. GUI-тесты открывают настоящее окно, поэтому на машине без рабочего стола их отключают переменной `MH_SKIP_GUI=1`.
 
 | Файл | Что проверяет |
 | :--- | :--- |
@@ -334,14 +381,15 @@ python -m unittest discover -s tests -t .
 
 ## Планы
 
-Уже сделано: очередь, TikTok, X, Pinterest, Reddit и SoundCloud, Instagram без входа, быстрые альбомы VK, треки по списку, автообновление yt-dlp, понятные ошибки, светлая тема.
+Уже сделано: версия для Linux, очередь, TikTok, X, Pinterest, Reddit и SoundCloud, Instagram без входа, быстрые альбомы VK, треки по списку, автообновление yt-dlp, понятные ошибки, светлая тема.
 
 Для Android уже есть то, чего пока нет в версии для Windows: аудио без перекодирования (m4a, opus), обложки в MP3, субтитры, плейлисты с лимитом и параллельная загрузка нескольких ссылок.
 
 Ещё в планах:
 
 - перенести эти возможности в версию для Windows;
-- проверка на Linux и macOS;
+- проверка на macOS;
+- сборка для Linux на ARM (aarch64);
 - музыка ВКонтакте, если VK вернёт к ней доступ.
 
 ## Участие в проекте

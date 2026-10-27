@@ -34,6 +34,8 @@ class ShellMixin:
     # ──────────────────────────────────────────────────────
     def setup_adaptive_resizing(self):
         self.bind("<Configure>", self._on_window_configure)
+        # Без оконного менеджера (и в некоторых тайловых на Linux) первого <Configure> может не быть
+        self.after(150, self._on_window_configure)
 
     def _on_window_configure(self, event=None):
         if event is not None and event.widget is not self:
@@ -256,11 +258,7 @@ class ShellMixin:
         win.minsize(440, 340)
         win.configure(fg_color=BG_MAIN)
         win.transient(self)
-        try:
-            if os.path.exists(self.icon_path):
-                win.after(250, lambda: win.iconbitmap(self.icon_path))
-        except Exception:
-            pass
+        theme.set_window_icon(win, delay=250)
         win.after(300, lambda: theme.apply_titlebar(win))
 
         ctk.CTkLabel(

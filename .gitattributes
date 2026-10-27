@@ -1,0 +1,5 @@
+# Скрипты и файлы для Linux всегда с LF: с CRLF оболочка и AppImage их не запускают
+*.sh text eol=lf
+*.desktop text eol=lf
+packaging/linux/AppRun text eol=lf
+packaging/linux/Dockerfile* text eol=lf

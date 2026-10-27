@@ -1,0 +1,14 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=MediaHarvester
+GenericName=Media downloader
+GenericName[ru]=Загрузчик медиа
+Comment=Download video, music and photos from social networks
+Comment[ru]=Скачивает видео, музыку и фото из соцсетей
+Exec=@EXEC@ %U
+Icon=mediaharvester
+Terminal=false
+Categories=Network;FileTransfer;
+Keywords=youtube;instagram;tiktok;vk;download;video;music;
+StartupWMClass=Mediaharvester

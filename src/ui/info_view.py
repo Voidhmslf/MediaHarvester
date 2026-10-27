@@ -13,7 +13,9 @@ from src.ui.theme import (
     TEXT_MAIN,
     TEXT_SECONDARY,
 )
+from src.utils.helpers import is_linux
 
+_LOG_DIR_HINT = "~/.local/share/MediaHarvester/logs" if is_linux() else "%LOCALAPPDATA%\\MediaHarvester\\logs"
 
 
 class InfoViewMixin:
@@ -59,7 +61,7 @@ class InfoViewMixin:
             "В строке статуса — короткая причина, а кнопка «Подробнее» показывает, что делать, "
             "и техническую причину по каждой ссылке. «Скопировать отчёт» собирает всё для разработчика: "
             "версии, ошибки и последние строки лога (токены и ключи в ссылках скрываются).\n"
-            "Лог хранится в %LOCALAPPDATA%\\MediaHarvester\\logs — откройте его кнопкой в окне «Подробнее».")
+            "Лог хранится в " + _LOG_DIR_HINT + " — откройте его кнопкой в окне «Подробнее».")
 
         self._info_section(
             "Треки по списку (без VK)",

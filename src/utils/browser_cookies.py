@@ -6,6 +6,7 @@ gallery-dl и yt-dlp умеют читать профиль браузера с�
 нужно закрыть, а у новых версий Chrome шифрование мешает чтению совсем (тогда подойдёт Firefox или cookies.txt).
 """
 import os
+import sys
 
 NONE_CHOICE = "Не использовать"
 
@@ -20,6 +21,10 @@ _BROWSERS: dict[str, tuple[str, str | None]] = {
     "Brave": ("brave", None),
     "Vivaldi": ("vivaldi", None),
 }
+if sys.platform.startswith("linux"):
+    # Opera GX есть только для Windows и macOS; зато на Linux распространён Chromium
+    del _BROWSERS["Opera GX"]
+    _BROWSERS["Chromium"] = ("chromium", None)
 
 BROWSER_CHOICES = [NONE_CHOICE, *_BROWSERS]
 

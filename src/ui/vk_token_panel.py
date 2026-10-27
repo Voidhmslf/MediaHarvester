@@ -1,5 +1,6 @@
 """Токен VK: карточка, вход (браузер/окно), экспериментальный клиент, диагностика токена."""
 import os
+import sys
 import threading
 import time
 import webbrowser
@@ -152,11 +153,7 @@ class VkTokenPanelMixin:
         dialog.configure(fg_color=BG_MAIN)
         dialog.transient(self)
         result = {"ok": False}
-        try:
-            if os.path.exists(self.icon_path):
-                dialog.after(250, lambda: dialog.iconbitmap(self.icon_path))
-        except Exception:
-            pass
+        theme.set_window_icon(dialog, delay=250)
         dialog.after(300, lambda: theme.apply_titlebar(dialog))
 
         ctk.CTkLabel(dialog, text="⚠ Вход как официальное приложение VK", font=self.font_title,
@@ -317,7 +314,12 @@ class VkTokenPanelMixin:
         result = find_auth_result(text)
         if result:
             self._set_login_busy(False)
-            sysclip.clear()  # токен не должен оставаться в буфере обмена (Tk-буфер не трогаем: он залипает)
+            # Токен не должен оставаться в буфере обмена. На Windows Tk-буфер не трогаем: он залипает
+            if not sysclip.clear() and sys.platform.startswith("linux"):
+                try:
+                    self.clipboard_clear()
+                except Exception:
+                    pass
             self._accept_vk_token(result.token)
             return
         self.after(700, self._watch_clipboard)

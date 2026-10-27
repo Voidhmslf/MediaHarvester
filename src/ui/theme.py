@@ -12,7 +12,7 @@ from types import SimpleNamespace
 import customtkinter as ctk
 from PIL import Image, ImageDraw
 
-from src.utils.helpers import get_resource_path
+from src.utils.helpers import get_resource_path, is_linux
 
 # ─────────────────────────────────────────
 # ЦВЕТА: (светлая тема, тёмная тема)
@@ -60,12 +60,37 @@ _APPEARANCE_NAMES = {"system": "System", "light": "Light", "dark": "Dark"}
 # ШРИФТЫ
 # ─────────────────────────────────────────
 FONT_FILES = ("Inter-Regular.ttf", "Inter-Medium.ttf", "Inter-SemiBold.ttf", "Inter-Bold.ttf")
-FALLBACK_UI_FAMILIES = ("Segoe UI Variable Text", "Segoe UI")
-MONO_FAMILIES = ("Cascadia Mono", "Consolas")
+if is_linux():
+    # Что есть почти в любом дистрибутиве: Noto / Cantarell (GNOME) / Ubuntu / DejaVu, последним — вечный запасной
+    FALLBACK_UI_FAMILIES = ("Noto Sans", "Cantarell", "Ubuntu", "Roboto", "Open Sans", "DejaVu Sans")
+    MONO_FAMILIES = ("JetBrains Mono", "Noto Sans Mono", "Ubuntu Mono", "Liberation Mono", "DejaVu Sans Mono")
+else:
+    FALLBACK_UI_FAMILIES = ("Segoe UI Variable Text", "Segoe UI")
+    MONO_FAMILIES = ("Cascadia Mono", "Consolas")
+
+
+def _load_fonts_fontconfig() -> bool:
+    """Linux: добавляет шрифты в конфигурацию fontconfig этого процесса (Tk берёт шрифты оттуда через Xft)."""
+    import ctypes.util
+    name = ctypes.util.find_library("fontconfig") or "libfontconfig.so.1"
+    try:
+        fc = ctypes.CDLL(name)
+        fc.FcConfigAppFontAddFile.argtypes = [ctypes.c_void_p, ctypes.c_char_p]
+        fc.FcConfigAppFontAddFile.restype = ctypes.c_int
+    except (OSError, AttributeError):
+        return False
+    loaded = False
+    for font_name in FONT_FILES:
+        path = get_resource_path(os.path.join("assets", "fonts", font_name))
+        if os.path.isfile(path):
+            loaded |= bool(fc.FcConfigAppFontAddFile(None, os.fsencode(path)))
+    return loaded
 
 
 def load_fonts() -> bool:
     """Подключает шрифты Inter из assets/fonts только для этого процесса (ничего не устанавливается в систему)."""
+    if is_linux():
+        return _load_fonts_fontconfig()
     if sys.platform != "win32":
         return False
     loaded = False
@@ -279,8 +304,67 @@ def card_pack() -> dict:
     return dict(fill="x", padx=2, pady=(0, CARD_GAP))
 
 
+def init_scaling() -> float:
+    """
+    Linux: Tk не знает про HiDPI, поэтому масштаб берём из окружения: MH_SCALE (ручной), GDK_SCALE,
+    Xft.dpi из xrdb. Вызывать до создания окна. На других системах customtkinter масштабирует сам.
+    """
+    if not is_linux():
+        return 1.0
+    scale = 1.0
+    for var in ("MH_SCALE", "GDK_SCALE"):
+        try:
+            scale = float(os.environ.get(var, ""))
+            break
+        except ValueError:
+            continue
+    else:
+        try:
+            import re
+            import subprocess
+            out = subprocess.run(["xrdb", "-query"], capture_output=True, text=True, timeout=2).stdout
+            match = re.search(r"Xft\.dpi:\s*([\d.]+)", out)
+            if match:
+                scale = float(match.group(1)) / 96
+        except Exception:
+            pass
+    scale = round(min(max(scale, 1.0), 3.0), 2)
+    if scale != 1.0:
+        ctk.set_widget_scaling(scale)
+        ctk.set_window_scaling(scale)
+    return scale
+
+
+def set_window_icon(window, delay: int = 0) -> None:
+    """Иконка окна: .ico на Windows, PNG через iconphoto на Linux (iconbitmap понимает там только xbm)."""
+    def apply():
+        try:
+            if is_linux():
+                import tkinter as tk
+                path = get_resource_path(os.path.join("assets", "brand", "mediaharvester-256.png"))
+                if os.path.isfile(path):
+                    window._mh_icon = tk.PhotoImage(master=window, file=path)  # ссылка, чтобы картинку не съел сборщик мусора
+                    window.iconphoto(True, window._mh_icon)
+            else:
+                path = get_resource_path(os.path.join("assets", "logo.ico"))
+                if os.path.isfile(path):
+                    window.iconbitmap(path)
+        except Exception as e:
+            import logging
+            logging.getLogger("mediaharvester.app").warning("Не удалось поставить иконку окна: %s", e)
+
+    if delay:
+        window.after(delay, apply)  # CTkToplevel на Windows перекрывает иконку своей, поэтому ставим с задержкой
+    else:
+        apply()
+
+
 def fit_window_height(window, preferred: int, minimum: int) -> int:
     """Желаемая высота окна, но не больше рабочей области экрана (без панели задач), в логических пикселях."""
+    if is_linux():
+        # Рабочую область без панелей X11 напрямую не отдаёт — оставляем запас под панель и заголовок
+        scaling = window._get_window_scaling() or 1.0
+        return max(minimum, min(preferred, int(window.winfo_screenheight() / scaling) - 110))
     try:
         import ctypes.wintypes as wt
         rect = wt.RECT()
@@ -294,6 +378,9 @@ def fit_window_height(window, preferred: int, minimum: int) -> int:
 
 def centered_geometry(window, width: int, height: int) -> str:
     """Строка geometry: окно заданного размера по центру рабочей области экрана (не под панелью задач)."""
+    if is_linux():
+        # Положение оставляем оконному менеджеру: на Wayland и в тайловых средах своё решение всё равно главнее
+        return f"{width}x{height}"
     try:
         import ctypes.wintypes as wt
         rect = wt.RECT()

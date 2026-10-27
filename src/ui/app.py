@@ -32,7 +32,8 @@ class MediaHarvesterApp(EditKeysMixin, ShellMixin, InfoViewMixin, DownloaderCard
     def __init__(self):
         # Тема должна быть выбрана до создания окна и виджетов, иначе окно мигнёт чужим цветом
         theme.apply_theme(SettingsManager().get("theme", "system"))
-        super().__init__()
+        theme.init_scaling()  # Linux: HiDPI из окружения (до создания окна)
+        super().__init__(className=APP_NAME)  # WM_CLASS для Linux: панель задач связывает окно с ярлыком
 
         setup_logging()
         self.settings = SettingsManager()
@@ -50,11 +51,7 @@ class MediaHarvesterApp(EditKeysMixin, ShellMixin, InfoViewMixin, DownloaderCard
 
         # Иконка окна
         self.icon_path = get_resource_path(os.path.join("assets", "logo.ico"))
-        try:
-            if os.path.exists(self.icon_path):
-                self.iconbitmap(self.icon_path)
-        except Exception:
-            pass
+        theme.set_window_icon(self)
 
         # Логотип (знак + надпись) для шапки и иконка переключателя темы
         self.logo_image = theme.lockup_image(32)

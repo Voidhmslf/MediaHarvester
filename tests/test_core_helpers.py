@@ -1,6 +1,7 @@
 import io
 import json
 import os
+import sys
 import tempfile
 import threading
 import unittest
@@ -234,6 +235,13 @@ class BrowserCookiesTests(unittest.TestCase):
         self.assertEqual(browser_cookies.gallery_dl_arg("Firefox"), "firefox")
         self.assertEqual(browser_cookies.ytdlp_option("Edge"), ("edge", None, None, None))
 
+    @unittest.skipUnless(sys.platform.startswith("linux"), "список браузеров для Linux")
+    def test_linux_offers_chromium_instead_of_opera_gx(self):
+        self.assertIn("Chromium", browser_cookies.BROWSER_CHOICES)
+        self.assertNotIn("Opera GX", browser_cookies.BROWSER_CHOICES)
+        self.assertEqual(browser_cookies.gallery_dl_arg("Chromium"), "chromium")
+
+    @unittest.skipIf(sys.platform.startswith("linux"), "Opera GX нет для Linux")
     def test_opera_gx_uses_its_own_profile_folder(self):
         with mock.patch.dict(os.environ, {"APPDATA": r"C:\Users\X\AppData\Roaming"}):
             arg = browser_cookies.gallery_dl_arg("Opera GX")

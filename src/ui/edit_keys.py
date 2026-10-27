@@ -1,4 +1,5 @@
 """Буфер обмена и горячие клавиши полей ввода (в любой раскладке), контекстное меню."""
+import sys
 import tkinter as tk
 from src.ui.theme import (
     ACCENT,
@@ -20,8 +21,14 @@ class EditKeysMixin:
     # ──────────────────────────────────────────────────────
     # ГОРЯЧИЕ КЛАВИШИ
     # ──────────────────────────────────────────────────────
-    # Коды клавиш Windows: не зависят от раскладки (в русской раскладке Ctrl+М — это та же клавиша V)
-    _VK_A, _VK_C, _VK_V, _VK_X = 65, 67, 86, 88
+    # Коды физических клавиш не зависят от раскладки (в русской раскладке Ctrl+М — это та же клавиша V).
+    # Windows: виртуальные коды; X11: коды evdev + 8, одинаковые во всех дистрибутивах
+    if sys.platform.startswith("linux"):
+        _VK_A, _VK_C, _VK_V, _VK_X = 38, 54, 55, 53
+        _ALT_MASK = 0x8 | 0x80  # Mod1 (Alt) и Mod5 (AltGr)
+    else:
+        _VK_A, _VK_C, _VK_V, _VK_X = 65, 67, 86, 88
+        _ALT_MASK = 0x20000
 
     def setup_keybindings(self):
         for entry in (self.entry_url, self.entry_token):
@@ -30,7 +37,7 @@ class EditKeysMixin:
 
     def _on_edit_key(self, event, entry):
         """Ctrl+V/C/X/A в полях ввода в любой раскладке (возврат "break" отключает стандартную обработку)."""
-        if event.state & 0x20000:  # Alt (в т.ч. AltGr) — не наш случай
+        if event.state & self._ALT_MASK:  # Alt (в т.ч. AltGr) — не наш случай
             return None
         code = event.keycode
         if code == self._VK_V:

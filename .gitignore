@@ -13,6 +13,7 @@ build/
 .installed.cfg
 *.spec
 !MediaHarvester.spec
+!packaging/linux/*.spec
 
 # Logs
 logs/

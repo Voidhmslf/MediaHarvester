@@ -1,0 +1,11 @@
+# Среда проверки на Linux: виртуальный дисплей (Xvfb), чтобы запускать окно и тесты без монитора.
+# Сборка идёт отдельно, в штатном образе python:3.11-bullseye (glibc 2.31): программа, собранная на старой glibc,
+# запускается на всех дистрибутивах не старше Ubuntu 20.04 / Debian 11 / RHEL 9. На более новой системе
+# собирать нельзя: бинарник потребует её glibc.
+FROM python:3.11-bookworm
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        xvfb xauth x11-utils xdotool imagemagick xdg-utils desktop-file-utils \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /work

@@ -15,6 +15,26 @@ def is_android() -> bool:
     return os.environ.get("MH_ANDROID") == "1"
 
 
+def is_linux() -> bool:
+    """Настольный Linux (Android тоже отдаёт sys.platform == "linux", но это другое приложение)."""
+    return sys.platform.startswith("linux") and not is_android()
+
+
+def restore_system_env() -> None:
+    """
+    В сборке PyInstaller загрузчик подменяет LD_LIBRARY_PATH на папку с собственными библиотеками,
+    и программы, которые мы запускаем (xdg-open, браузер), пытаются загрузить именно их и падают.
+    Сам процесс библиотеки уже загрузил, поэтому возвращаем значение, которое было до запуска.
+    """
+    if not (is_linux() and getattr(sys, "frozen", False)):
+        return
+    original = os.environ.pop("LD_LIBRARY_PATH_ORIG", None)
+    if original is None:
+        os.environ.pop("LD_LIBRARY_PATH", None)
+    else:
+        os.environ["LD_LIBRARY_PATH"] = original
+
+
 # Определение пути к FFmpeg для объединения потоков и конвертации.
 # На Android путь к бинарнику задаёт приложение через MH_FFMPEG (может быть пустым — тогда без склейки).
 FFMPEG_PATH: str | None = None

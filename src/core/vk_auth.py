@@ -413,6 +413,9 @@ def login_in_window(
     timeout: float = LOGIN_TIMEOUT_SECONDS,
 ) -> LoginOutcome:
     """Запускает окно входа отдельным процессом и ждёт результата. Блокирующий вызов — для рабочего потока."""
+    if sys.platform.startswith("linux"):
+        # Встроенному окну на Linux нужен GTK/Qt WebKit, которого у многих нет: сразу идём через обычный браузер
+        return LoginOutcome("unavailable", detail="встроенное окно входа на Linux не используется")
     cmd, cwd = _worker_command(auth_url, success_prefix)
     creationflags = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
     try:
