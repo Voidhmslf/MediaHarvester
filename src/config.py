@@ -66,12 +66,13 @@ class SettingsManager:
 
     def __init__(self, filepath: str | None = None):
         if filepath is None:
-            if getattr(sys, "frozen", False):
-                # В .exe папка с кодом временная — храним настройки в профиле пользователя
+            # Определяем корень проекта относительно src/config.py
+            root_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            if getattr(sys, "frozen", False) or not os.access(root_dir, os.W_OK):
+                # В .exe папка с кодом временная, а в системном пакете (Nix) — только для чтения:
+                # храним настройки в профиле пользователя
                 filepath = os.path.join(get_app_data_dir(), "settings.json")
             else:
-                # Определяем корень проекта относительно src/config.py
-                root_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
                 filepath = os.path.join(root_dir, "settings.json")
         self.filepath = filepath
 

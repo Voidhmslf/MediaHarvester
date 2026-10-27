@@ -27,7 +27,7 @@ from src.core.vk_engine import VKPYMUSIC_AVAILABLE
 from src.core.router import detect_url_type
 from tkinter import filedialog
 from src.utils import browser_cookies
-from src.utils.helpers import open_folder
+from src.utils.helpers import open_folder, self_update_disabled
 from src.core.ytdlp_engine import probe_video_quality
 
 
@@ -243,7 +243,11 @@ class DownloaderCardsMixin:
             font=self.font_small, command=self._on_auto_update_toggled, **theme.checkbox_style())
         if self.settings.get("auto_update_ytdlp", True):
             self.chk_auto_update.select()
-        self.chk_auto_update.pack(anchor="w", padx=PAD, pady=(0, 14))
+        if self_update_disabled():
+            # Пакет из Nix и т. п.: yt-dlp обновляется вместе с системой, переключатель не нужен
+            row.pack_configure(pady=(0, 14))
+        else:
+            self.chk_auto_update.pack(anchor="w", padx=PAD, pady=(0, 14))
 
     def _clear_url(self):
         self.entry_url.delete(0, "end")

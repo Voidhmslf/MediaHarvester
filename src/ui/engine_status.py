@@ -4,7 +4,7 @@ from src.ui.theme import (
     STATUS_RED,
     TEXT_MUTED,
 )
-from src.utils.helpers import check_ffmpeg
+from src.utils.helpers import check_ffmpeg, self_update_disabled
 from src.utils.ytdlp_updater import check_for_update, current_version as ytdlp_version
 
 from src.utils.logger import get_logger
@@ -31,7 +31,7 @@ class EngineStatusMixin:
                 "FFmpeg не найден: видео выше 720p и конвертация в MP3 могут не работать",
                 state="warning")
 
-        if not self.settings.get("auto_update_ytdlp", True):
+        if self_update_disabled() or not self.settings.get("auto_update_ytdlp", True):
             return
         self._engine_state["update"] = "checking"
         self.after(0, self._render_engine_info)

@@ -34,7 +34,9 @@ def build_fake_release(path: str, version: str = FAKE_VERSION) -> None:
                     text = re.sub(r"__version__\s*=\s*'[^']*'", f"__version__ = '{version}'", text)
                     zf.writestr(arc, text)
                 else:
-                    zf.write(full, arc)
+                    # writestr, а не write: в /nix/store у файлов дата 1970, а zip принимает только с 1980
+                    with open(full, "rb") as f:
+                        zf.writestr(arc, f.read())
 
 
 class VersionTests(unittest.TestCase):
@@ -45,7 +47,7 @@ class VersionTests(unittest.TestCase):
 
 
 class ActivationTests(unittest.TestCase):
-    def run_probe(self, appdata: str) -> list[str]:
+    def run_probe(self, appdata: str, **extra_env) -> list[str]:
         code = (
             "from src.utils.ytdlp_updater import activate_override\n"
             "print(activate_override())\n"
@@ -54,7 +56,7 @@ class ActivationTests(unittest.TestCase):
             "print(v.__version__)\n"
             "print('zip' if '.zip' in yt_dlp.__file__ else 'bundled')\n"
         )
-        env = dict(os.environ, LOCALAPPDATA=appdata, XDG_DATA_HOME=appdata, HOME=appdata)
+        env = dict(os.environ, LOCALAPPDATA=appdata, XDG_DATA_HOME=appdata, HOME=appdata, **extra_env)
         out = subprocess.run([sys.executable, "-c", code], cwd=ROOT, env=env,
                              capture_output=True, text=True, timeout=120)
         self.assertEqual(out.returncode, 0, out.stderr)
@@ -70,6 +72,15 @@ class ActivationTests(unittest.TestCase):
             build_fake_release(os.path.join(self.appdata_with(tmp), "yt-dlp.zip"))
             active, version, source = self.run_probe(tmp)
             self.assertEqual((active, version, source), (FAKE_VERSION, FAKE_VERSION, "zip"))
+
+    def test_system_package_ignores_downloaded_copy(self):
+        # Сборка из Nix: yt-dlp только из пакета, скачанная другой сборкой копия не подхватывается и не удаляется
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(self.appdata_with(tmp), "yt-dlp.zip")
+            build_fake_release(path)
+            active, version, source = self.run_probe(tmp, MH_NO_SELF_UPDATE="1")
+            self.assertEqual((active, source), ("None", "bundled"))
+            self.assertTrue(os.path.exists(path))
 
     def test_corrupt_override_falls_back_and_is_removed(self):
         with tempfile.TemporaryDirectory() as tmp:

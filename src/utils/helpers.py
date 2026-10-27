@@ -35,11 +35,21 @@ def restore_system_env() -> None:
         os.environ["LD_LIBRARY_PATH"] = original
 
 
+def self_update_disabled() -> bool:
+    """
+    Программу поставил системный пакетный менеджер (Nix и т. п.): yt-dlp обновляется вместе с ним,
+    а сама программа ничего не скачивает и не подменяет. Флаг выставляет обёртка пакета.
+    """
+    return os.environ.get("MH_NO_SELF_UPDATE") == "1"
+
+
 # Определение пути к FFmpeg для объединения потоков и конвертации.
-# На Android путь к бинарнику задаёт приложение через MH_FFMPEG (может быть пустым — тогда без склейки).
+# MH_FFMPEG задают Android-приложение (может быть пустым — тогда без склейки) и системные пакеты (ffmpeg из nixpkgs).
 FFMPEG_PATH: str | None = None
 if is_android():
     FFMPEG_PATH = os.environ.get("MH_FFMPEG") or None
+elif os.environ.get("MH_FFMPEG"):
+    FFMPEG_PATH = os.environ["MH_FFMPEG"]
 else:
     try:
         import imageio_ffmpeg

@@ -133,6 +133,9 @@ def activate_override() -> str | None:
     global _active_finder
     if _active_finder is not None:
         return read_zip_version(_active_finder.zip_path)
+    from src.utils.helpers import self_update_disabled
+    if self_update_disabled():
+        return None  # системный пакет: только yt-dlp из пакета, даже если скачанная копия осталась от другой сборки
 
     zip_path = override_path()
     if not os.path.isfile(zip_path):

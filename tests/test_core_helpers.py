@@ -227,6 +227,34 @@ class GalleryEngineTests(unittest.TestCase):
                 ge.download_gallery("https://x.com/a", tmp, "X", cancel_event=ev)
 
 
+class SystemPackageTests(unittest.TestCase):
+    """Флаги, которые выставляет обёртка пакета Nix: свой ffmpeg и запрет самообновления."""
+
+    def run_code(self, code: str, **env) -> str:
+        import subprocess
+        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        out = subprocess.run([sys.executable, "-c", code], cwd=root, env=dict(os.environ, **env),
+                             capture_output=True, text=True, timeout=60)
+        self.assertEqual(out.returncode, 0, out.stderr)
+        return out.stdout.strip()
+
+    def test_ffmpeg_from_environment(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            fake = os.path.join(tmp, "ffmpeg")
+            self.assertEqual(
+                self.run_code("from src.utils import helpers; print(helpers.FFMPEG_PATH)", MH_FFMPEG=fake), fake)
+
+    def test_self_update_flag(self):
+        with mock.patch.dict(os.environ, {"MH_NO_SELF_UPDATE": "1"}):
+            self.assertTrue(helpers.self_update_disabled())
+        with mock.patch.dict(os.environ, {"MH_NO_SELF_UPDATE": ""}):
+            self.assertFalse(helpers.self_update_disabled())
+
+    def test_settings_go_to_profile_when_code_is_read_only(self):
+        with tempfile.TemporaryDirectory() as tmp,                 mock.patch("src.config.os.access", return_value=False),                 mock.patch("src.config.get_app_data_dir", return_value=tmp):
+            self.assertEqual(SettingsManager().filepath, os.path.join(tmp, "settings.json"))
+
+
 class BrowserCookiesTests(unittest.TestCase):
     def test_choices_and_resolution(self):
         self.assertEqual(browser_cookies.BROWSER_CHOICES[0], browser_cookies.NONE_CHOICE)

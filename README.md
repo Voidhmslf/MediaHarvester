@@ -43,6 +43,7 @@
 | :--- | :--- | :--- |
 | **Windows** 10, 11 | `MediaHarvester.exe` (110 МБ) | не нужно, просто запустите ([подробнее](#windows)) |
 | **Linux** x86_64: Ubuntu 20.04+, Debian 11+, Fedora, Arch, Mint, openSUSE, RHEL 9+ и другие | `…-linux-x86_64.AppImage` (123 МБ) или `…-linux-x86_64.tar.gz` (133 МБ) | AppImage: `chmod +x` и запуск; архив: `./install.sh` ([подробнее](#linux)) |
+| **NixOS** и Nix | ничего, flake из репозитория | `nix run github:Voidhmslf/MediaHarvester` ([подробнее](#nixos)) |
 | **Android** 10+ | `…-android-arm64.apk` (73 МБ) | открыть файл на телефоне ([подробнее](#mediaharvester-для-android)) |
 | macOS | — | пока нет готовой сборки, можно [запустить из исходников](#запуск-из-исходников) |
 
@@ -95,6 +96,28 @@ Get-FileHash .\MediaHarvester.exe -Algorithm SHA256
 - **Нужен X11 или XWayland.** Окно сделано на Tk, а он работает через X. На Wayland в GNOME, KDE и других средах XWayland включён по умолчанию, поэтому ничего делать не нужно.
 - **Мелкий интерфейс на экране с высокой плотностью.** Масштаб берётся из `GDK_SCALE` или `Xft.dpi`. Если окно всё равно мелкое, задайте масштаб вручную: `MH_SCALE=1.5 mediaharvester`.
 - **Cookies из браузера:** в списке есть Chromium, а Opera GX нет, потому что её не выпускают для Linux. Firefox из snap и flatpak yt-dlp находит сам.
+
+### NixOS
+
+AppImage и архив на NixOS сами не запустятся: им нужны библиотеки по стандартным путям. Для Nix в репозитории есть flake. Он собирает программу из исходников, а Python, yt-dlp, gallery-dl и ffmpeg берёт из nixpkgs. Поэтому yt-dlp обновляется вместе с системой (`nix flake update`, `nixos-rebuild`), а встроенное самообновление в этой версии выключено.
+
+Попробовать без установки:
+
+```bash
+nix run github:Voidhmslf/MediaHarvester
+```
+
+Поставить в систему через flake (`/etc/nixos/flake.nix`):
+
+```nix
+inputs.mediaharvester.url = "github:Voidhmslf/MediaHarvester";
+# в модуле с environment.systemPackages:
+environment.systemPackages = [ inputs.mediaharvester.packages.${pkgs.stdenv.hostPlatform.system}.default ];
+```
+
+Можно подключить overlay (`nixpkgs.overlays = [ inputs.mediaharvester.overlays.default ];`) и писать просто `pkgs.mediaharvester`. Для home-manager это работает так же, через `home.packages`. Если flakes не включены, запустите AppImage через `appimage-run` (пакет `appimage-run` или `programs.appimage.enable = true;` с `binfmt = true`).
+
+Настройки и лог лежат там же, в `~/.local/share/MediaHarvester`. Сборка проверена на nixos-unstable (Python 3.14): окно открывается, видео скачивается и склеивается через ffmpeg из nixpkgs.
 
 ## MediaHarvester для Android
 
@@ -322,6 +345,7 @@ MediaHarvester/
 ├── main.py                      точка входа и служебные режимы для сборки
 ├── MediaHarvester.spec          настройки PyInstaller
 ├── packaging/linux/             сборка для Linux: PyInstaller, AppImage, install.sh
+├── packaging/nix/               пакет для Nix (его подключает flake.nix в корне)
 ├── requirements.txt
 ├── CHANGELOG.md                 что менялось в каждой версии
 ├── assets/                      иконка, логотип и шрифты Inter (с лицензией)
