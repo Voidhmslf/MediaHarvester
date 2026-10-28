@@ -308,5 +308,54 @@ class InstagramWrapperTests(unittest.TestCase):
         self.assertEqual(self.fallback_flag("https://www.instagram.com/p/AB/"), (False, "Instagram"))
 
 
+class _FakeYoutubeDL:
+    """Как yt-dlp: файл с именем будущей дорожки, найденный рядом, считается скачанным и после конвертации удаляется."""
+
+    def __init__(self, opts):
+        self.opts = opts
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+    def extract_info(self, url, download=True):
+        source = self.opts["outtmpl"].replace("%(title)s", "Clip").replace("%(ext)s", "webm")
+        if not os.path.exists(source):
+            with open(source, "wb") as f:
+                f.write(b"audio")
+        result = os.path.splitext(source)[0] + ".mp3"
+        with open(result, "wb") as f:
+            f.write(b"mp3")
+        os.remove(source)
+        for hook in self.opts.get("post_hooks", []):
+            hook(result)
+        return {"title": "Clip"}
+
+
+class AudioDownloadTests(unittest.TestCase):
+    def test_audio_does_not_consume_video_with_same_title(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            video = os.path.join(tmp, "Clip.webm")
+            with open(video, "wb") as f:
+                f.write(b"video")
+            files = []
+            with mock.patch.object(ye.yt_dlp, "YoutubeDL", _FakeYoutubeDL):
+                ye.download_video("https://youtu.be/x", tmp, "Только аудио (MP3)", lambda *a: None,
+                                  on_file=files.append)
+            with open(video, "rb") as f:
+                self.assertEqual(f.read(), b"video")
+            self.assertEqual(files, [os.path.join(tmp, "Clip.mp3")])
+            self.assertEqual(sorted(os.listdir(tmp)), ["Clip.mp3", "Clip.webm"])  # временной папки не осталось
+
+    def test_video_is_saved_in_place(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            files = []
+            with mock.patch.object(ye.yt_dlp, "YoutubeDL", _FakeYoutubeDL):
+                ye.download_video("https://youtu.be/x", tmp, "HD (720p)", lambda *a: None, on_file=files.append)
+            self.assertEqual(files, [os.path.join(tmp, "Clip.mp3")])
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -1,5 +1,7 @@
 import os
 import re
+import shutil
+import tempfile
 import threading
 from typing import Callable, Any
 import yt_dlp
@@ -213,11 +215,29 @@ def download_video(
 
     fmt, postprocessors = get_video_format_spec(quality_choice, audio_codec, embed_cover)
 
+    # Звук качается в свою временную папку, а готовый файл сразу переносится на место. Иначе yt-dlp
+    # принимает лежащее рядом видео с тем же названием («Ролик.webm») за уже скачанную звуковую дорожку,
+    # делает из него mp3 и удаляет само видео.
+    audio_only = "Только аудио" in quality_choice
+    work_dir = download_path
+    if audio_only:
+        os.makedirs(download_path, exist_ok=True)
+        work_dir = tempfile.mkdtemp(prefix=".mediaharvester-", dir=download_path)
+
+    def finished(path: str) -> None:
+        if audio_only and os.path.isfile(path):
+            dest = os.path.join(download_path, os.path.relpath(path, work_dir))
+            os.makedirs(os.path.dirname(dest), exist_ok=True)
+            os.replace(path, dest)
+            path = dest
+        if on_file:
+            on_file(path)
+
     if allow_playlist:
-        outtmpl = os.path.join(download_path, "%(playlist_title,title)s", "%(title)s.%(ext)s")
+        outtmpl = os.path.join(work_dir, "%(playlist_title,title)s", "%(title)s.%(ext)s")
         noplaylist = False
     else:
-        outtmpl = os.path.join(download_path, "%(title)s.%(ext)s")
+        outtmpl = os.path.join(work_dir, "%(title)s.%(ext)s")
         noplaylist = True
 
     opts: dict[str, Any] = {
@@ -246,8 +266,7 @@ def download_video(
         opts["ffmpeg_location"] = FFMPEG_PATH
     if postprocessors:
         opts["postprocessors"] = postprocessors
-    if on_file:
-        opts["post_hooks"] = [on_file]
+    opts["post_hooks"] = [finished]
     _apply_cookies(opts, cookies_path, cookies_browser)
     _android_opts(opts)
 
@@ -306,3 +325,7 @@ def download_video(
         # Человекочитаемое объяснение строится выше по стеку (utils.errors.explain_error)
         log.warning("yt-dlp: ошибка загрузки %s: %s", url, raw_msg)
         raise RuntimeError(clean_msg) from e
+    finally:
+        # Готовые файлы уже перенесены; остались только недокачанные части
+        if audio_only:
+            shutil.rmtree(work_dir, ignore_errors=True)
