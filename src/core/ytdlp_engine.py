@@ -181,10 +181,12 @@ def download_video(
     audio_codec: str = "mp3",
     embed_cover: bool = False,
     subtitle_langs: list[str] | None = None,
+    on_file: Callable[[str], None] | None = None,
 ) -> str:
     """
     Скачивает видео или аудио с помощью yt-dlp.
     Поддерживает отмену через cancel_event, плейлисты (playlist_limit > 0 — только первые N видео) и cookies.txt.
+    on_file получает путь к каждому готовому файлу (после склейки и конвертации), в том числе уже скачанному раньше.
     """
     def hook(d: dict[str, Any]) -> None:
         if cancel_event and cancel_event.is_set():
@@ -224,6 +226,7 @@ def download_video(
         "no_warnings": True,
         "noplaylist": noplaylist,
         "progress_hooks": [hook],
+        "noprogress": True,  # ход загрузки показывает hook; иначе yt-dlp печатает его в консоль
         "format": fmt,
         "windowsfilenames": True,
     }
@@ -243,6 +246,8 @@ def download_video(
         opts["ffmpeg_location"] = FFMPEG_PATH
     if postprocessors:
         opts["postprocessors"] = postprocessors
+    if on_file:
+        opts["post_hooks"] = [on_file]
     _apply_cookies(opts, cookies_path, cookies_browser)
     _android_opts(opts)
 

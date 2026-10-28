@@ -41,7 +41,7 @@
 
 | Система | Что скачать | Как установить |
 | :--- | :--- | :--- |
-| **Windows** 10, 11 | `MediaHarvester.exe` (110 МБ) | не нужно, просто запустите ([подробнее](#windows)) |
+| **Windows** 10, 11 | `MediaHarvester.exe` (110 МБ), для терминала и ИИ-агентов — `mediaharvester-cli.exe` | не нужно, просто запустите ([подробнее](#windows)) |
 | **Linux** x86_64: Ubuntu 20.04+, Debian 11+, Fedora, Arch, Mint, openSUSE, RHEL 9+ и другие | `…-linux-x86_64.AppImage` (123 МБ) или `…-linux-x86_64.tar.gz` (133 МБ) | AppImage: `chmod +x` и запуск; архив: `./install.sh` ([подробнее](#linux)) |
 | **NixOS** и Nix | ничего, flake из репозитория | `nix run github:Voidhmslf/MediaHarvester` ([подробнее](#nixos)) |
 | **Android** 10+ | `…-android-arm64.apk` (73 МБ) | открыть файл на телефоне ([подробнее](#mediaharvester-для-android)) |
@@ -146,6 +146,60 @@ environment.systemPackages = [ inputs.mediaharvester.packages.${pkgs.stdenv.host
 **Чего пока нет.** Музыки ВКонтакте (как и на компьютере: вместо неё «Треки по списку»), 32-битных телефонов и публикации в Google Play. YouTube Google иногда не пускает во встроенное окно входа: тогда импортируйте `cookies.txt`. В ffmpeg из состава приложения есть GPL-компоненты (x264), учтите это, если соберёте свою сборку и будете её распространять.
 
 Приложение собрано на Kotlin и Jetpack Compose, а скачивает тем же Python-кодом (`src/core`), который запускается внутри приложения через Chaquopy. Как собрать и проверить в эмуляторе: [android/README.md](android/README.md).
+
+## Командная строка и ИИ-агенты
+
+У программы есть режим без окна: та же загрузка, но из терминала, скриптов и ИИ-агентов. На Linux и в Nix это та же команда `mediaharvester`, только с подкомандой (без подкоманды открывается окно). На Windows оконный `.exe` не умеет писать в консоль, поэтому для терминала в релизе лежит отдельный `mediaharvester-cli.exe`.
+
+```bash
+mediaharvester download https://youtu.be/jNQXAC9IVRw              # в текущую папку, печатает пути к файлам
+mediaharvester download -q 720 -o ~/Videos ССЫЛКА1 ССЫЛКА2
+mediaharvester download -q audio --audio-format m4a --cover ССЫЛКА
+mediaharvester download --playlist --limit 10 ССЫЛКА_НА_ПЛЕЙЛИСТ
+mediaharvester info ССЫЛКА --json                                  # название, длительность, качества
+mediaharvester transcript ССЫЛКА --lang ru,en                      # текст речи «[мм:сс] …» из субтитров
+mediaharvester frames ССЫЛКА_ИЛИ_ФАЙЛ -n 8                          # кадры в JPEG
+mediaharvester frames видео.mp4 --at 0:15,1:30                     # кадры в нужные моменты
+mediaharvester update                                              # свежий yt-dlp
+```
+
+Готовые пути, текст и JSON (`--json`) идут в stdout, а ход работы и ошибки в stderr, поэтому вывод можно передавать другим программам. Код выхода: 0 — всё скачалось, 1 — была ошибка, 2 — неверные параметры, 130 — отмена (Ctrl+C). Cookies, браузер для cookies и вход ВКонтакте берутся из настроек окна программы, но их можно задать и ключами `--cookies` и `--browser`. Полный список ключей покажет `mediaharvester download --help`.
+
+`transcript` не распознаёт речь, а берёт субтитры: с сайта (сначала настоящие, потом автоматические) или файлы `.srt`/`.vtt` рядом со скачанным видео. `frames` сначала скачивает ссылку в 480p в кэш программы и в папку загрузок ничего не кладёт.
+
+### MCP-сервер для Claude, Cursor и других агентов
+
+`mediaharvester mcp` запускает сервер [Model Context Protocol](https://modelcontextprotocol.io) через stdin/stdout. Агент получает четыре инструмента:
+
+| Инструмент | Что делает |
+| :--- | :--- |
+| `download` | скачивает по ссылкам и возвращает пути к файлам (качество, только звук, плейлисты, субтитры) |
+| `media_info` | сведения о ссылке без скачивания |
+| `get_transcript` | текст речи с метками времени |
+| `get_frames` | кадры видео картинками: равномерно по всей длине или в заданные секунды |
+
+Последние два инструмента позволяют агенту «посмотреть» ролик: прочитать, что в нём говорят, и увидеть, что показывают, а потом попросить кадры в нужные моменты.
+
+Claude Code:
+
+```bash
+claude mcp add mediaharvester -- mediaharvester mcp
+```
+
+Claude Desktop (`claude_desktop_config.json`), Cursor (`~/.cursor/mcp.json`) и другие клиенты с таким же форматом:
+
+```json
+{
+  "mcpServers": {
+    "mediaharvester": {
+      "command": "C:\Tools\mediaharvester-cli.exe",
+      "args": ["mcp"]
+    }
+  }
+}
+```
+
+На Linux в `command` укажите `mediaharvester` (после `install.sh`) или полный путь к AppImage. На NixOS: `"command": "nix"`, `"args": ["run", "github:Voidhmslf/MediaHarvester", "--", "mcp"]`. Если папку не передать, агент сохраняет файлы туда же, куда окно программы (обычно `~/Downloads`).
 
 ## Что умеет
 
@@ -320,7 +374,7 @@ pip install pyinstaller
 pyinstaller --clean --noconfirm MediaHarvester.spec
 ```
 
-Файл появится в `dist\MediaHarvester.exe`. Версия берётся из [`src/version.py`](src/version.py) и попадает в свойства файла (Проводник, Свойства, Подробно). Заодно её же показывают заголовок окна, экран «Справка» и лог, а тест следит, чтобы README и CHANGELOG не отстали.
+В `dist` появятся `MediaHarvester.exe` и консольный `mediaharvester-cli.exe`: у них общее содержимое, но разный тип приложения Windows. Версия берётся из [`src/version.py`](src/version.py) и попадает в свойства файла (Проводник, Свойства, Подробно). Заодно её же показывают заголовок окна, экран «Справка» и лог, а тест следит, чтобы README и CHANGELOG не отстали.
 
 Что сделано в сборке отдельно:
 
@@ -342,8 +396,8 @@ docker run --rm -v "$PWD:/src:ro" -v "$PWD/dist/linux:/out" python:3.11-bullseye
 
 ```text
 MediaHarvester/
-├── main.py                      точка входа и служебные режимы для сборки
-├── MediaHarvester.spec          настройки PyInstaller
+├── main.py                      точка входа: окно, командная строка и служебные режимы для сборки
+├── MediaHarvester.spec          настройки PyInstaller (оконный .exe и mediaharvester-cli.exe)
 ├── packaging/linux/             сборка для Linux: PyInstaller, AppImage, install.sh
 ├── packaging/nix/               пакет для Nix (его подключает flake.nix в корне)
 ├── requirements.txt
@@ -354,9 +408,13 @@ MediaHarvester/
 ├── src/
 │   ├── version.py               единственное место, где записана версия
 │   ├── config.py                режимы, адреса входа VK, хранилище настроек
+│   ├── cli.py                   командная строка: download, info, transcript, frames, update, mcp
+│   ├── mcp_server.py            сервер MCP для ИИ-агентов (stdio, без сторонних библиотек)
 │   ├── core/                    всё, что качает; про окно ничего не знает
 │   │   ├── router.py            платформа, тип ссылки и нужный движок
 │   │   ├── download_queue.py    очередь: разбор ссылок, порядок, статусы
+│   │   ├── headless.py          загрузка без окна: выбор движка и список скачанных файлов
+│   │   ├── media_tools.py       текст речи из субтитров и кадры через ffmpeg
 │   │   ├── ytdlp_engine.py      видео, аудио, плейлисты
 │   │   ├── gallery_engine.py    фото, галереи и ленты через gallery-dl
 │   │   ├── insta_engine.py      Instagram: выбор между анонимным способом и gallery-dl

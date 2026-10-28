@@ -1,3 +1,4 @@
+import os
 import sys
 
 if __name__ == "__main__":
@@ -22,6 +23,19 @@ if __name__ == "__main__":
         activate_override()
     except Exception:
         pass
+
+    # Командная строка: подкоманда (download, mcp…) или консольная сборка mediaharvester-cli.exe
+    from src.cli import main as cli_main, wants_cli
+    exe_name = os.path.splitext(os.path.basename(sys.executable))[0].lower()
+    if wants_cli(sys.argv) or (getattr(sys, "frozen", False) and exe_name.endswith("-cli")):
+        if sys.stdout is None:
+            # Оконный MediaHarvester.exe не может писать в терминал
+            import ctypes
+            ctypes.windll.user32.MessageBoxW(
+                None, "Для командной строки используйте mediaharvester-cli.exe из того же релиза.",
+                "MediaHarvester", 0x40)
+            sys.exit(2)
+        sys.exit(cli_main(sys.argv[1:]))
 
     from src.ui.app import MediaHarvesterApp
     app = MediaHarvesterApp()

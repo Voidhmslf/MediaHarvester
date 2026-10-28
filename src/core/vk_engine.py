@@ -12,13 +12,16 @@ import vk_api.exceptions
 
 from src.config import VK_MUSIC_USER_AGENT
 from src.core.http_download import download_photo_file
-from src.utils.helpers import sanitize_filename, DownloadCancelledError
+from src.utils.helpers import sanitize_filename, DownloadCancelledError, get_app_data_dir
 from src.utils.logger import get_logger
 
 log = get_logger("vk")
 
-# Проверка наличия vkpymusic
+# Проверка наличия vkpymusic. При импорте он создаёт папку logs/ в текущей папке (в терминале — где угодно,
+# у системного пакета — в домашней), поэтому импортируем его из папки данных программы.
+_cwd = os.getcwd()
 try:
+    os.chdir(get_app_data_dir())
     from vkpymusic import Service as VkMusicService
     from vkpymusic.service import download_m3u8_as_mp3_pyav
     VKPYMUSIC_AVAILABLE = True
@@ -26,6 +29,8 @@ except ImportError:
     VkMusicService = None
     download_m3u8_as_mp3_pyav = None
     VKPYMUSIC_AVAILABLE = False
+finally:
+    os.chdir(_cwd)
 
 # Приоритет типов размеров фото ВКонтакте (от наибольшего к наименьшему)
 TYPE_ORDER = ['w', 'z', 'y', 'x', 'r', 'q', 'p', 'm', 's']

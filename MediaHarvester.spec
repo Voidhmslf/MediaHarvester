@@ -35,6 +35,15 @@ os.makedirs(os.path.dirname(_version_file), exist_ok=True)
 with open(_version_file, 'w', encoding='utf-8') as _f:
     _f.write(str(_version_info))
 
+# Те же свойства для консольной версии, только со своим именем файла и описанием
+_cli_version_file = os.path.join(SPECPATH, 'build', 'version_info_cli.txt')
+with open(_cli_version_file, 'w', encoding='utf-8') as _f:
+    _f.write(str(_version_info)
+             .replace("'MediaHarvester - multimedia downloader'", "'MediaHarvester - command line'")
+             .replace("'MediaHarvester.exe'", "'mediaharvester-cli.exe'")
+             .replace("u'MediaHarvester - multimedia downloader'", "u'MediaHarvester - command line'")
+             .replace("u'MediaHarvester.exe'", "u'mediaharvester-cli.exe'"))
+
 datas = [
     ('assets/logo.ico', 'assets'),
     ('assets/fonts', 'assets/fonts'),
@@ -105,4 +114,29 @@ exe = EXE(
     entitlements_file=None,
     icon=['assets/logo.ico'],
     version=_version_file,
+)
+
+# Консольная версия для терминала и ИИ-агентов (mediaharvester-cli.exe download|info|transcript|frames|mcp).
+# Оконный .exe не может писать в консоль, поэтому это отдельный файл с тем же содержимым.
+exe_cli = EXE(
+    pyz,
+    a.scripts,
+    a.binaries,
+    a.datas,
+    [],
+    name='mediaharvester-cli',
+    debug=False,
+    bootloader_ignore_signals=False,
+    strip=False,
+    upx=True,
+    upx_exclude=[],
+    runtime_tmpdir=None,
+    console=True,
+    disable_windowed_traceback=False,
+    argv_emulation=False,
+    target_arch=None,
+    codesign_identity=None,
+    entitlements_file=None,
+    icon=['assets/logo.ico'],
+    version=_cli_version_file,
 )
